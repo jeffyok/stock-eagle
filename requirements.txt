@@ -1,0 +1,39 @@
+# 数据源
+akshare>=1.14
+efinance>=0.5
+baostock>=0.8
+
+# Web
+streamlit>=1.35
+fastapi>=0.110
+uvicorn>=0.29
+
+# 数据库
+sqlalchemy>=2.0
+pymysql>=1.1
+
+# 数据分析
+pandas>=2.2
+numpy>=1.26
+
+# 技术指标
+# pandas-ta 不支持 Python 3.14，改用 ta
+ta>=0.11
+
+# 定时任务
+apscheduler>=3.10
+
+# 可视化
+plotly>=5.20
+mplfinance>=0.12
+
+# 推送
+httpx>=0.27
+
+# 配置
+python-dotenv>=1.0
+pydantic>=2.5
+pydantic-settings>=2.1
+
+# 日志
+loguru>=0.7
