@@ -3,5 +3,12 @@
 """
 from app.strategy.base import BaseStrategy
 from app.strategy.multi_factor import MultiFactorStrategy
+from app.strategy.technical import MACDStrategy, BollingerBandStrategy, MAStrategy
 
-__all__ = ["BaseStrategy", "MultiFactorStrategy"]
+__all__ = [
+    "BaseStrategy",
+    "MultiFactorStrategy",
+    "MACDStrategy",
+    "BollingerBandStrategy",
+    "MAStrategy",
+]
