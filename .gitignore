@@ -38,7 +38,7 @@ env/
 *.db
 *.sqlite
 *.sqlite3
-data/
+/data/
 logs/
 __pycache__/
 app/__pycache__/
