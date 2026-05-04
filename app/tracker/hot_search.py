@@ -1,0 +1,113 @@
+"""
+热搜监控
+追踪东方财富/百度热搜，腾讯热搜通过 westock-data 获取
+"""
+from typing import List, Dict, Any
+import subprocess, json, sys
+
+
+class HotSearchMonitor:
+    """
+    热搜监控器
+    功能：
+    1. 东方财富个股热搜  (akshare)
+    2. 百度股票热搜      (akshare)
+    3. 腾讯自选股热搜    (westock-data)
+    """
+
+    def eastmoney(self) -> List[Dict]:
+        """东方财富个股热搜 Top 20"""
+        try:
+            import akshare as ak
+            df = ak.stock_hot_rank_em()
+            if df is None or df.empty:
+                return []
+            records = []
+            for _, row in df.iterrows():
+                records.append({
+                    "rank": len(records) + 1,
+                    "code": str(row.get("代码", "")),
+                    "name": str(row.get("名称", "")),
+                    "pct_chg": float(row.get("涨跌幅", 0) or 0),
+                })
+            return records[:20]
+        except Exception as e:
+            print(f"东财热搜获取失败: {e}")
+            return []
+
+    def baidu(self, date: str | None = None) -> List[Dict]:
+        """百度股票热搜（date 格式 YYYYMMDD，默认今日）"""
+        try:
+            import akshare as ak
+            import datetime
+            d = date or datetime.datetime.now().strftime("%Y%m%d")
+            # 尝试两种可能的函数签名
+            try:
+                df = ak.stock_hot_search_baidu(symbol=d)
+            except TypeError:
+                df = ak.stock_hot_search_baidu(date=d)
+            if df is None or getattr(df, "empty", True):
+                return []
+            records = []
+            for _, row in df.iterrows():
+                records.append({
+                    "rank": len(records) + 1,
+                    "keyword": str(row.get("关键词", "")),
+                    "hot_index": float(row.get("热度指数", 0) or 0),
+                })
+            return records[:20]
+        except Exception as e:
+            print(f"百度热搜获取失败: {e}")
+            return []
+
+    def tencent(self) -> List[Dict]:
+        """
+        腾讯自选股热搜 Top 20
+        通过 westock-data skillhub 获取
+        """
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "npx", "--yes", "westock-data-skillhub@latest", "hot", "stock"],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0:
+                print(f"westock-data hot 失败: {result.stderr}")
+                return []
+            data = json.loads(result.stdout)
+            records = []
+            for i, item in enumerate(data[:20]):
+                records.append({
+                    "rank": i + 1,
+                    "code": str(item.get("code", "")),
+                    "name": str(item.get("name", "")),
+                    "pct_chg": float(item.get("pct_chg", 0) or 0),
+                })
+            return records
+        except Exception as e:
+            print(f"腾讯热搜获取失败: {e}")
+            return []
+
+    # ── 综合报告 ──────────────────────────────────────────
+
+    def get_report(self) -> Dict[str, Any]:
+        em = self.eastmoney()
+        bd = self.baidu()
+        tc = self.tencent()
+
+        em_names = {r.get("name", "") for r in em}
+        tc_names = {r.get("name", "") for r in tc}
+        common = em_names & tc_names
+
+        hot_tags = []
+        if em:
+            hot_tags.append(f"东财热搜#{em[0].get('name', '')}")
+        if tc:
+            hot_tags.append(f"腾讯热搜#{tc[0].get('name', '')}")
+
+        return {
+            "eastmoney": em,
+            "baidu": bd,
+            "tencent": tc,
+            "cross_platform": list(common),
+            "hot_tags": hot_tags,
+        }

@@ -142,20 +142,24 @@ class AKShareSource(BaseDataSource):
             r = row.iloc[0]
             return {
                 "code": code,
-                "net_mf": float(r.get("主力净流入-净额", 0)),
-                "net_mf_big": float(r.get("超大单净流入-净额", 0)),
-                "net_mf_small": float(r.get("小单净流入-净额", 0)),
+                "net_mf": float(r.get("今日主力净流入-净额", 0)),
+                "net_mf_big": float(r.get("今日超大单净流入-净额", 0)),
+                "net_mf_small": float(r.get("今日小单净流入-净额", 0)),
             }
         except Exception as e:
             print(f"AKShare 资金流向获取失败: {e}")
             return None
 
     def get_dragon_tiger(self, date: str) -> List[Dict]:
-        """获取龙虎榜数据"""
+        """
+        获取龙虎榜数据（单日）
+        date: 格式 YYYYMMDD 或 YYYY-MM-DD
+        """
         try:
             date_fmt = date.replace("-", "")
-            df = ak.stock_lhb_detail_em(date=date_fmt)
-            if df.empty:
+            # stock_lhb_detail_em 参数为 start_date/end_date
+            df = ak.stock_lhb_detail_em(start_date=date_fmt, end_date=date_fmt)
+            if df is None or df.empty:
                 return []
             records = []
             for _, row in df.iterrows():
@@ -163,14 +167,51 @@ class AKShareSource(BaseDataSource):
                     "code": str(row.get("代码", "")),
                     "name": str(row.get("名称", "")),
                     "reason": str(row.get("上榜原因", "")),
-                    "buy_amount": float(row.get("买入额", 0)),
-                    "sell_amount": float(row.get("卖出额", 0)),
-                    "net_amount": float(row.get("净额", 0)),
+                    "buy_amount": self._safe_float(row.get("买入额", 0)),
+                    "sell_amount": self._safe_float(row.get("卖出额", 0)),
+                    "net_amount": self._safe_float(row.get("净额", 0)),
                 })
             return records
         except Exception as e:
             print(f"AKShare 龙虎榜获取失败: {e}")
             return []
+
+    def get_stock_money_flow_rank(self, indicator: str = "今日") -> List[Dict]:
+        """
+        获取个股资金流向排行榜
+        indicator: '今日' | '3日排行' | '5日排行' | '10日排行'
+        """
+        try:
+            df = ak.stock_individual_fund_flow_rank(indicator=indicator)
+            if df is None or df.empty:
+                return []
+            records = []
+            for _, row in df.iterrows():
+                records.append({
+                    "code": str(row.get("代码", "")),
+                    "name": str(row.get("名称", "")),
+                    "close": self._safe_float(row.get("最新价", 0)),
+                    "pct_chg": self._safe_float(row.get("今日涨跌幅", 0)),
+                    "net_mf": self._safe_float(row.get("今日主力净流入-净额", 0)),
+                    "net_mf_pct": self._safe_float(row.get("今日主力净流入-净占比", 0)),
+                    "net_mf_big": self._safe_float(row.get("今日超大单净流入-净额", 0)),
+                    "net_mf_small": self._safe_float(row.get("今日小单净流入-净额", 0)),
+                })
+            records.sort(key=lambda x: x["net_mf"], reverse=True)
+            return records
+        except Exception as e:
+            print(f"AKShare 资金流向排行获取失败: {e}")
+            return []
+
+    @staticmethod
+    def _safe_float(val, default: float = 0.0) -> float:
+        """安全转 float，容忍 '-' 等无效字符"""
+        if val is None:
+            return default
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return default
 
     # --- 财务数据 ---
 
@@ -286,4 +327,142 @@ class AKShareSource(BaseDataSource):
             return records
         except Exception as e:
             print(f"AKShare 基金净值历史获取失败({code}): {e}")
+            return []
+
+    # ─── 板块/概念 ───────────────────────────────────────────────────────
+
+    def get_concept_sectors(self) -> List[Dict]:
+        """获取概念板块实时行情"""
+        import akshare as ak
+
+        try:
+            df = ak.stock_board_concept_name_em()
+            if df.empty:
+                return []
+            records = []
+            for _, row in df.iterrows():
+                records.append({
+                    "sector_code": str(row.get("板块代码", "")),
+                    "sector_name": str(row.get("板块名称", "")),
+                    "pct_chg": float(row.get("涨跌幅", 0)),
+                    "total_market": float(row.get("总市值", 0) or 0),
+                })
+            records.sort(key=lambda x: x["pct_chg"], reverse=True)
+            return records
+        except Exception as e:
+            print(f"AKShare 概念板块获取失败: {e}")
+            return []
+
+    def get_sector_money_flow(self, sector_type: str = "industry") -> List[Dict]:
+        """获取板块资金流向排行"""
+        import akshare as ak
+
+        try:
+            if sector_type == "industry":
+                df = ak.stock_board_industry_fund_flow_rank_em()
+            else:
+                df = ak.stock_board_concept_fund_flow_rank_em()
+            if df.empty:
+                return []
+            records = []
+            for _, row in df.iterrows():
+                records.append({
+                    "sector_name": str(row.get("名称", "")),
+                    "pct_chg": float(row.get("今日涨跌幅", 0) or 0),
+                    "net_mf": float(row.get("今日主力净流入-净额", 0) or 0),
+                    "net_mf_pct": float(row.get("今日主力净流入-净占比", 0) or 0),
+                })
+            records.sort(key=lambda x: x["net_mf"], reverse=True)
+            return records
+        except Exception as e:
+            print(f"AKShare 板块资金流获取失败: {e}")
+            return []
+
+    # ─── 北向资金 ───────────────────────────────────────────────────────
+
+    def get_north_money_flow(self, days: int = 5) -> List[Dict]:
+        """获取北向资金流向（近 N 日）"""
+        import akshare as ak
+        import pandas as pd
+
+        try:
+            df = ak.stock_hsgt_north_net_flow_em()
+            if df.empty:
+                return []
+            df["日期"] = pd.to_datetime(df["日期"])
+            df = df.sort_values("日期", ascending=False).head(days)
+            records = []
+            for _, row in df.iterrows():
+                records.append({
+                    "date": str(row["日期"].date()),
+                    "north_net": float(row.get("北向资金净流入额", 0) or 0),
+                    "north_index": float(row.get("北向资金收盘指数", 0) or 0),
+                })
+            return records
+        except Exception as e:
+            print(f"AKShare 北向资金获取失败: {e}")
+            return []
+
+    # ─── 热搜 ─────────────────────────────────────────────────────────
+
+    def get_hot_search_tencent(self) -> List[Dict]:
+        """腾讯自选股热搜 Top 20"""
+        import akshare as ak
+
+        try:
+            df = ak.stock_hot_rank_tencent()
+            if df is None or df.empty:
+                return []
+            records = []
+            for _, row in df.iterrows():
+                records.append({
+                    "code": str(row.get("代码", "")),
+                    "name": str(row.get("名称", "")),
+                    "pct_chg": float(row.get("涨跌幅", 0) or 0),
+                })
+            return records[:20]
+        except Exception as e:
+            print(f"AKShare 腾讯热搜获取失败: {e}")
+            return []
+
+    def get_hot_search_eastmoney(self) -> List[Dict]:
+        """东方财富个股热搜 Top 20"""
+        import akshare as ak
+
+        try:
+            df = ak.stock_hot_rank_em()
+            if df is None or df.empty:
+                return []
+            records = []
+            for _, row in df.iterrows():
+                records.append({
+                    "code": str(row.get("代码", "")),
+                    "name": str(row.get("名称", "")),
+                    "pct_chg": float(row.get("涨跌幅", 0) or 0),
+                })
+            return records[:20]
+        except Exception as e:
+            print(f"AKShare 东方财富热搜获取失败: {e}")
+            return []
+
+    def get_hot_search_baidu(self, date: str = None) -> List[Dict]:
+        """百度股票热搜"""
+        import akshare as ak
+
+        try:
+            if date is None:
+                import datetime
+                date = datetime.datetime.now().strftime("%Y%m%d")
+            df = ak.stock_hot_search_baidu(symbol=date)
+            if df is None or df.empty:
+                return []
+            records = []
+            for _, row in df.iterrows():
+                records.append({
+                    "keyword": str(row.get("关键词", "")),
+                    "hot_index": float(row.get("热度指数", 0) or 0),
+                })
+            return records[:20]
+        except Exception as e:
+            print(f"AKShare 百度热搜获取失败: {e}")
             return []

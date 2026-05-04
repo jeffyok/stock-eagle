@@ -61,3 +61,33 @@ class DataService:
 
     def get_fund_nav(self, code: str) -> List[Dict]:
         return self._call("get_fund_nav", code)
+
+    # ── 板块/概念 ───────────────────────────────────────────────────────
+
+    def get_sector_spot(self) -> List[Dict]:
+        return self._call("get_sector_spot")
+
+    def get_concept_sectors(self) -> List[Dict]:
+        return self._call("get_concept_sectors")
+
+    def get_sector_money_flow(self, sector_type: str = "industry") -> List[Dict]:
+        return self._call("get_sector_money_flow", sector_type)
+
+    # ── 资金流向 ──────────────────────────────────────────────────────
+
+    def get_money_flow(self, code: str) -> Optional[Dict]:
+        return self._call("get_money_flow", code)
+
+    def get_north_money_flow(self, days: int = 5) -> List[Dict]:
+        return self._call("get_north_money_flow", days)
+
+    # ── 热搜 ───────────────────────────────────────────────────────────
+
+    def get_hot_search_tencent(self) -> List[Dict]:
+        return self._call("get_hot_search_tencent")
+
+    def get_hot_search_eastmoney(self) -> List[Dict]:
+        return self._call("get_hot_search_eastmoney")
+
+    def get_hot_search_baidu(self, date: str = None) -> List[Dict]:
+        return self._call("get_hot_search_baidu", date)
