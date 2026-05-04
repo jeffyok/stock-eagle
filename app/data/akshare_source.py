@@ -219,3 +219,71 @@ class AKShareSource(BaseDataSource):
         except Exception as e:
             print(f"AKShare 财务数据获取失败({code}): {e}")
             return None
+
+    # --- 基金相关 ---
+
+    def get_fund_rank(self) -> List[Dict]:
+        """
+        获取开放式基金排行数据（全量，不做类型过滤）
+        数据来源：东方财富 fund_open_fund_rank_em()
+        返回字段：code, name, nav, nav_acc, pct_chg_1d,
+                 return_1w/1m/3m/6m/1y/2y/3y/ytd/total
+        """
+        try:
+            df = ak.fund_open_fund_rank_em()
+            if df.empty:
+                return []
+            records = []
+            for _, row in df.iterrows():
+                # 将收益率字段转为数值，无法解析的设为 None
+                def _to_float(val):
+                    try:
+                        return float(val)
+                    except Exception:
+                        return None
+
+                records.append({
+                    "code":        str(row.get("基金代码", "")),
+                    "name":        str(row.get("基金简称", "")),
+                    "nav":         float(row.get("单位净值", 0) or 0),
+                    "nav_acc":     float(row.get("累计净值", 0) or 0),
+                    "pct_chg_1d":  _to_float(row.get("日增长率")),
+                    "return_1w":   _to_float(row.get("近1周")),
+                    "return_1m":   _to_float(row.get("近1月")),
+                    "return_3m":   _to_float(row.get("近3月")),
+                    "return_6m":   _to_float(row.get("近6月")),
+                    "return_1y":   _to_float(row.get("近1年")),
+                    "return_2y":   _to_float(row.get("近2年")),
+                    "return_3y":   _to_float(row.get("近3年")),
+                    "return_ytd":  _to_float(row.get("今年来")),
+                    "return_total": _to_float(row.get("成立来")),
+                })
+            return records
+        except Exception as e:
+            print(f"AKShare 基金排行获取失败: {e}")
+            return []
+
+    def get_fund_nav_history(self, code: str, years: int = 1) -> List[Dict]:
+        """
+        获取单只基金历史净值（最近 N 年）
+        AKShare 接口：fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
+        """
+        try:
+            df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
+            if df.empty:
+                return []
+            df["净值日期"] = pd.to_datetime(df["净值日期"])
+            cutoff = pd.Timestamp.now() - pd.Timedelta(days=365 * years)
+            df = df[df["净值日期"] >= cutoff]
+            records = []
+            for _, row in df.iterrows():
+                records.append({
+                    "date":    str(row["净值日期"].date()),
+                    "nav":     float(row.get("单位净值", 0) or 0),
+                    "nav_acc": float(row.get("累计净值", 0) or 0),
+                    "pct_chg": float(row.get("日增长率", 0) or 0),
+                })
+            return records
+        except Exception as e:
+            print(f"AKShare 基金净值历史获取失败({code}): {e}")
+            return []

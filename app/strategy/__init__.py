@@ -5,6 +5,7 @@ from app.strategy.base import BaseStrategy
 from app.strategy.multi_factor import MultiFactorStrategy
 from app.strategy.technical import MACDStrategy, BollingerBandStrategy, MAStrategy
 from app.strategy.combine import CombinedStrategy
+from app.strategy.fund_screener import FundScreener
 
 __all__ = [
     "BaseStrategy",
@@ -13,4 +14,5 @@ __all__ = [
     "BollingerBandStrategy",
     "MAStrategy",
     "CombinedStrategy",
+    "FundScreener",
 ]
