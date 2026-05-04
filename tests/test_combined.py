@@ -2,6 +2,9 @@
 测试策略组合（CombinedStrategy）
 对比单个策略 vs 组合策略的回测结果
 """
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from datetime import date, timedelta
 from app.strategy.technical import MACDStrategy, BollingerBandStrategy, MAStrategy
 from app.strategy.combine import CombinedStrategy

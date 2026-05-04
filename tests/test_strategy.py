@@ -2,8 +2,8 @@
 快速测试多因子策略
 """
 import sys
-sys.path.insert(0, r"e:\pycharm_workspace\stock-eagle")
-
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from app.strategy.multi_factor import MultiFactorStrategy
 from datetime import date, timedelta
 

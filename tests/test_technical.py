@@ -1,5 +1,6 @@
 import sys
-sys.path.insert(0, 'e:/pycharm_workspace/stock-eagle')
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from app.strategy.technical import MACDStrategy, BollingerBandStrategy, MAStrategy
 from datetime import date, timedelta
 
