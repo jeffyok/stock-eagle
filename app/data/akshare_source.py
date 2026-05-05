@@ -470,49 +470,18 @@ class AKShareSource(BaseDataSource):
 
     def get_hot_search_tencent(self) -> List[Dict]:
         """
-        腾讯自选股热搜 Top 20
+        腾讯自选股热搜 Top 50
         优先 westock-data（腾讯数据源），失败时降级到东方财富人气榜
         """
-        import subprocess
-
         # 优先用 westock-data 腾讯原生接口
         try:
-            result = subprocess.run(
-                ["npx", "--yes", "westock-data-skillhub@latest", "hot"],
-                capture_output=True, text=True, timeout=30,
-            )
-            if result.returncode == 0:
-                # 跳过 #< CLIXML 前缀和 <Objs 等 XML 标签行
-                all_lines = result.stdout.split("\n")
-                data_lines = []
-                for l in all_lines:
-                    stripped = l.strip()
-                    if stripped and not stripped.startswith("#") and not stripped.startswith("<Objs"):
-                        data_lines.append(stripped)
-                # 找到包含分隔符 | 的标题行（跳过 | --- 行）
-                header_idx = -1
-                for i, line in enumerate(data_lines):
-                    if "|" in line and "---" not in line:
-                        header_idx = i
-                        break
-                if header_idx >= 0 and header_idx + 1 < len(data_lines):
-                    header_line = data_lines[header_idx]
-                    # 处理标题行中可能残留的 #< CLIXML 前缀
-                    header_line = header_line.split("|", 1)[-1] if "|" in header_line else header_line
-                    headers = [h.strip() for h in header_line.split("|") if h.strip() and h.strip() != "---"]
-                    records = []
-                    for line in data_lines[header_idx + 1:]:
-                        cols = [c.strip() for c in line.split("|") if c.strip() and c.strip() != "---"]
-                        if len(cols) >= len(headers):
-                            row_dict = dict(zip(headers, cols))
-                            zdf_str = row_dict.get("zdf", "0").strip()
-                            records.append({
-                                "code": row_dict.get("code", ""),
-                                "name": row_dict.get("name", ""),
-                                "pct_chg": float(zdf_str) if zdf_str.replace(".", "").replace("-", "").isdigit() else 0,
-                            })
-                    if records:
-                        return records[:20]
+            from app.data.westock_data import WestockData
+            records = WestockData().hot()
+            if records:
+                # 添加排名
+                for i, r in enumerate(records, 1):
+                    r["rank"] = i
+                return records[:50]
         except Exception:
             pass
 
@@ -523,8 +492,9 @@ class AKShareSource(BaseDataSource):
             if df is None or df.empty:
                 return []
             records = []
-            for _, row in df.iterrows():
+            for idx, row in df.iterrows():
                 records.append({
+                    "rank": idx + 1,
                     "code": str(row.get("代码", "")),
                     "name": str(row.get("股票名称", "")),
                     "pct_chg": float(row.get("涨跌幅", 0) or 0),

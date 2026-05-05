@@ -61,7 +61,19 @@ if code:
         prev = df.iloc[-2] if len(df) >= 2 else latest
 
         # ── 关键指标卡片（涨跌颜色：涨红跌绿，CSS 美化）─────────────
-        st.subheader(f"{latest.get('name', '')}（{code}）")
+        # 获取股票名称（用 efinance，速度快）
+        stock_name = latest.get("name", "")
+        if not stock_name:
+            try:
+                import efinance as ef
+                # 去掉 sh/sz 前缀
+                code_num = code.replace("sh", "").replace("sz", "").replace("bj", "")
+                info = ef.stock.get_base_info(code_num)
+                if info is not None and "股票名称" in info:
+                    stock_name = info["股票名称"]
+            except Exception:
+                pass
+        st.subheader(f"{stock_name}（{code}）")
 
         price = float(latest.get("收盘", latest.get("close", 0)))
         pre_close = float(prev.get("收盘", prev.get("close", price)))
