@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     MYSQL_PORT: int = 3306
     MYSQL_USER: str = "root"
     MYSQL_PASSWORD: str = ""
-    MYSQL_DATABASE: str = "stockeagle"
+    MYSQL_DATABASE: str = "db_stockeagle"
 
     # 飞书推送
     FEISHU_WEBHOOK_URL: Optional[str] = None

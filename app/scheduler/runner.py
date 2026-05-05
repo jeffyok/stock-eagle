@@ -10,6 +10,7 @@ from app.scheduler.jobs import (
     update_daily_quotes,
     scan_strategy_signals,
     daily_review_task,
+    push_portfolio_alerts_task,
 )
 from app.config import settings
 
@@ -64,6 +65,15 @@ class SchedulerRunner:
             daily_review_task,
             CronTrigger(hour=16, minute=0),
             id="daily_review",
+            replace_existing=True,
+        )
+
+        # 持仓预警推送：每天 16:05（收盘后）
+        logger.info("注册持仓预警推送任务：每天 16:05")
+        self.scheduler.add_job(
+            push_portfolio_alerts_task,
+            CronTrigger(hour=16, minute=5),
+            id="portfolio_alerts",
             replace_existing=True,
         )
 

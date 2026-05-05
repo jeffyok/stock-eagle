@@ -53,6 +53,8 @@ pg = st.navigation([
     st.Page("pages/page_fund.py",         title="💰 基金筛选"),
     st.Page("pages/page_backtest.py",    title="📈 回测验证"),
     st.Page("pages/page_portfolio.py",   title="📋 持仓管理"),
+    st.Page("pages/page_risk.py",        title="🛡️ 风控管理"),
+    st.Page("pages/page_notify.py",      title="📢 推送管理"),
     st.Page("pages/page_review.py",       title="📰 每日复盘"),
 ])
 

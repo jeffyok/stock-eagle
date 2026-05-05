@@ -7,6 +7,7 @@ from app.models.sector import SectorDaily
 from app.models.signal import StrategySignal
 from app.models.portfolio import Portfolio
 from app.models.review import DailyReview
+from app.models.risk_rule import RiskRule
 
 __all__ = [
     "StockBasic", "StockDaily", "StockRealtime", "StockMoneyFlow", "DragonTiger",
@@ -15,4 +16,5 @@ __all__ = [
     "StrategySignal",
     "Portfolio",
     "DailyReview",
+    "RiskRule",
 ]
