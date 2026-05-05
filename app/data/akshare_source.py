@@ -176,6 +176,42 @@ class AKShareSource(BaseDataSource):
             print(f"AKShare 龙虎榜获取失败: {e}")
             return []
 
+    def get_lhb_active_brokers(self, date: str = None) -> List[Dict]:
+        """
+        获取龙虎榜活跃营业部（来自东方财富）
+        返回字段：营业部名称、上榜日、买入个股数、卖出个股数、总买卖净额、买入股票
+        date: 可选，格式 YYYYMMDD 或 YYYY-MM-DD，用于过滤上榜日
+        """
+        try:
+            import pandas as pd
+            df = ak.stock_lhb_hyyyb_em()
+            if df is None or df.empty:
+                return []
+            records = []
+            for _, row in df.iterrows():
+                record = {
+                    "broker_name": str(row.get("营业部名称", "")),
+                    "list_date": str(row.get("上榜日", "")),
+                    "buy_stocks": int(row.get("买入个股数", 0)),
+                    "sell_stocks": int(row.get("卖出个股数", 0)),
+                    "buy_amount": self._safe_float(row.get("买入总金额", 0)),
+                    "sell_amount": self._safe_float(row.get("卖出总金额", 0)),
+                    "net_amount": self._safe_float(row.get("总买卖净额", 0)),
+                    "stocks": str(row.get("买入股票", "")),
+                    "broker_code": str(row.get("营业部代码", "")),
+                }
+                # 按日期过滤（如果指定了 date）
+                if date:
+                    date_norm = date.replace("-", "")
+                    rec_date = record["list_date"].replace("-", "")
+                    if rec_date != date_norm:
+                        continue
+                records.append(record)
+            return records
+        except Exception as e:
+            print(f"AKShare 活跃营业部获取失败: {e}")
+            return []
+
     def get_stock_money_flow_rank(self, indicator: str = "今日") -> List[Dict]:
         """
         获取个股资金流向排行榜

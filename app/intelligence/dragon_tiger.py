@@ -202,6 +202,78 @@ class DragonTigerAnalyzer:
 
     # ── 辅助 ──────────────────────────────────────────────────────────────
 
+    def get_lhb_summary(self, date: str) -> Dict[str, Any]:
+        """
+        获取指定日期龙虎榜汇总
+        date: 格式 YYYYMMDD 或 YYYY-MM-DD
+        返回：{total_stocks, up_limit, down_limit, stocks: []}
+        """
+        records = self.ds.get_dragon_tiger(date)
+        if not records:
+            return {}
+
+        stocks = []
+        up_limit = 0
+        down_limit = 0
+
+        for r in records:
+            reason = str(r.get("reason", ""))
+            name = r.get("name", "")
+            stocks.append(r)
+            if "涨" in reason or "涨停" in reason:
+                up_limit += 1
+            if "跌" in reason or "跌停" in reason:
+                down_limit += 1
+
+        return {
+            "total_stocks": len(records),
+            "up_limit": up_limit,
+            "down_limit": down_limit,
+            "stocks": stocks,
+        }
+
+    # ── 活跃游资席位识别 ─────────────────────────────────────────────
+
+    def identify_hot_seats(self, date: str, top_n: int = 10) -> List[Dict]:
+        """
+        识别指定日期的活跃游资席位 Top N
+        date: YYYYMMDD 或 YYYY-MM-DD
+        返回：[{营业部, 类型, 等级, 买入个股数, 净金额(亿), 上榜日}]
+        """
+        try:
+            from datetime import datetime, timedelta
+            date_norm = date.replace("-", "")
+            # stock_lhb_hyyyb_em 不接收日期参数，返回最近活跃营业部
+            # 尝试按上榜日匹配；匹配不上则返回最新 top_n 条
+            records = self.ds.get_lhb_active_brokers(date_norm)
+            if not records:
+                # 未传入日期过滤时，直接取 API 返回的全部数据
+                records = self.ds.get_lhb_active_brokers()
+
+            if not records:
+                return []
+
+            # 按净金额排序
+            records.sort(key=lambda x: abs(x.get("net_amount", 0)), reverse=True)
+            results = []
+            for r in records[:top_n]:
+                broker_name = r.get("broker_name", "")
+                broker_info = self.identify_broker(broker_name)
+                results.append({
+                    "营业部": broker_name,
+                    "类型": broker_info["type"],
+                    "等级": broker_info["level"],
+                    "买入个股数": r.get("buy_stocks", 0),
+                    "卖出个股数": r.get("sell_stocks", 0),
+                    "净金额(亿)": round(r.get("net_amount", 0) / 1e8, 2),
+                    "上榜日": r.get("list_date", ""),
+                    "涉及股票": r.get("stocks", ""),
+                })
+            return results
+        except Exception as e:
+            print(f"识别活跃席位失败: {e}")
+            return []
+
     @staticmethod
     def _interpret(total_net: float, buy_count: int, total_count: int) -> str:
         """解读龙虎榜信号"""

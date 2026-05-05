@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # 日志
     LOG_LEVEL: str = "INFO"
 
+    # 版本
+    APP_VERSION: str = "1.0.0"
+
     # 数据库 URL（自动构建）
     @property
     def DATABASE_URL(self) -> str:

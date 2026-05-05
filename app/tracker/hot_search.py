@@ -27,7 +27,7 @@ class HotSearchMonitor:
                 records.append({
                     "rank": len(records) + 1,
                     "code": str(row.get("代码", "")),
-                    "name": str(row.get("名称", "")),
+                    "name": str(row.get("股票名称", "")),
                     "pct_chg": float(row.get("涨跌幅", 0) or 0),
                 })
             return records[:20]
@@ -94,20 +94,42 @@ class HotSearchMonitor:
         bd = self.baidu()
         tc = self.tencent()
 
-        em_names = {r.get("name", "") for r in em}
-        tc_names = {r.get("name", "") for r in tc}
+        em_names = {r.get("name", "") for r in em if r.get("name")}
+        tc_names = {r.get("name", "") for r in tc if r.get("name")}
         common = em_names & tc_names
 
         hot_tags = []
         if em:
-            hot_tags.append(f"东财热搜#{em[0].get('name', '')}")
+            hot_tags.append(f"东财热搜#{em[0].get('name', '未知')}")
         if tc:
-            hot_tags.append(f"腾讯热搜#{tc[0].get('name', '')}")
+            hot_tags.append(f"腾讯热搜#{tc[0].get('name', '未知')}")
+        if bd:
+            hot_tags.append(f"百度热搜#{bd[0].get('keyword', '未知')}")
+
+        # all_hot: 合并东方财富和腾讯热搜（有股票名称的），用于综合报告展示
+        all_hot = []
+        for r in em:
+            all_hot.append({"rank": len(all_hot) + 1, "source": "东方财富", **r})
+        for r in tc:
+            if r.get("name") and r.get("name") not in {x["name"] for x in all_hot}:
+                all_hot.append({"rank": len(all_hot) + 1, "source": "腾讯", **r})
+
+        summary = []
+        if em:
+            summary.append(f"东方财富热搜 Top1：{em[0].get('name', 'N/A')}（{em[0].get('pct_chg', 0):+.2f}%）")
+        if tc:
+            summary.append(f"腾讯热搜 Top1：{tc[0].get('name', 'N/A')}（{tc[0].get('pct_chg', 0):+.2f}%）")
+        if bd:
+            summary.append(f"百度热搜 Top1：{bd[0].get('keyword', 'N/A')}（热度 {bd[0].get('hot_index', 0):.0f}）")
+        if common:
+            summary.append(f"跨平台共同关注：{', '.join(list(common)[:3])}")
 
         return {
             "eastmoney": em,
             "baidu": bd,
             "tencent": tc,
+            "all_hot": all_hot,
+            "summary": summary,
             "cross_platform": list(common),
             "hot_tags": hot_tags,
         }
