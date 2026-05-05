@@ -96,7 +96,7 @@ if run_signal:
         style = df_show.style
         if "direction" in df_show.columns:
             style = style.map(color_direction, subset=pd.IndexSlice[:, ["direction"]])
-        st.dataframe(style, use_container_width=True, hide_index=True)
+        st.dataframe(style, width='stretch', hide_index=True)
 
         c1, c2, c3 = st.columns(3)
         buy_count = sum(1 for s in signals if s.get("direction") == "buy")
@@ -140,7 +140,7 @@ if run_backtest:
     with st.expander("交易明细"):
         trades_df = pd.DataFrame(r["trades"])
         if not trades_df.empty:
-            st.dataframe(trades_df, use_container_width=True, hide_index=True)
+            st.dataframe(trades_df, width='stretch', hide_index=True)
         else:
             st.caption("无交易记录")
 

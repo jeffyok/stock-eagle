@@ -54,7 +54,7 @@ webhook = st.text_input(
 
 c_save, c_status = st.columns([1, 3])
 with c_save:
-    if st.button("💾 保存 URL", use_container_width=True):
+    if st.button("💾 保存 URL", width='stretch'):
         if webhook:
             if save_webhook_url(webhook):
                 st.success("URL 已保存到 .env，重启后生效！")
@@ -79,7 +79,7 @@ st.info("定时推送由系统自动化任务执行。当前 Webhook URL 保存�
 c_now, c_alert = st.columns(2)
 
 with c_now:
-    if st.button("📤 立即推送持仓预警", type="primary", use_container_width=True):
+    if st.button("📤 立即推送持仓预警", type="primary", width='stretch'):
         if not webhook:
             st.warning("请先配置并保存 Webhook URL")
         else:
@@ -94,7 +94,7 @@ with c_now:
 
 with c_alert:
     test_text = st.text_input("测试文本", value="✅ StockEagle 推送测试成功！")
-    if st.button("📤 推送测试文本", use_container_width=True):
+    if st.button("📤 推送测试文本", width='stretch'):
         if not webhook:
             st.warning("请先配置并保存 Webhook URL")
         else:
@@ -119,6 +119,6 @@ try:
                 "状态": "✅ 成功" if row[3] == "success" else "❌ 失败",
                 "时间": str(row[5])[:19],
             })
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(rows, width='stretch', hide_index=True)
 except Exception as e:
     st.error(f"读取推送记录失败：{e}")

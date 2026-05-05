@@ -24,7 +24,11 @@ min_1y = p_cols[2].number_input("近1年收益下限（%）", value=0.0, step=5.
 
 # ── 第二行：排序 + 高级筛选 ─────────────────────────────
 s_cols = st.columns([1.5, 1, 2])
-sort_by = s_cols[0].selectbox("排序字段", ["return_1y", "return_3y", "return_ytd", "nav"])
+sort_by = s_cols[0].selectbox(
+    "排序字段",
+    ["return_1y", "return_3y", "return_ytd", "nav"],
+    format_func=lambda x: {"return_1y": "近1年(%)", "return_3y": "近3年(%)", "return_ytd": "今年以来(%)", "nav": "单位净值"}.get(x, x),
+)
 ascending = s_cols[1].checkbox("升序")
 
 with s_cols[2].expander("高级筛选"):
@@ -73,7 +77,23 @@ if run_filter:
         for col in ["return_1y", "return_3y", "return_ytd"]:
             if col in df.columns:
                 df[col] = df[col].round(2) if df[col].dtype == "float64" else df[col]
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        df = df.rename(columns={
+            "code": "基金代码",
+            "name": "基金名称",
+            "nav": "单位净值(元)",
+            "nav_acc": "累计净值(元)",
+            "pct_chg_1d": "日涨跌幅(%)",
+            "return_1w": "近1周(%)",
+            "return_1m": "近1月(%)",
+            "return_3m": "近3月(%)",
+            "return_6m": "近6月(%)",
+            "return_1y": "近1年(%)",
+            "return_2y": "近2年(%)",
+            "return_3y": "近3年(%)",
+            "return_ytd": "今年以来(%)",
+            "return_total": "成立以来(%)",
+        })
+        st.dataframe(df, width='stretch', hide_index=True)
 
         st.subheader("查看净值历史")
         selected_code = st.selectbox(
@@ -100,11 +120,11 @@ if run_filter:
                         title=f"{[r['name'] for r in results if r['code']==selected_code][0]} 净值走势",
                         height=400, xaxis_title="日期", yaxis_title="净值（元）",
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                 except ImportError:
                     st.line_chart(df_nav.set_index("日期")["净值"])
                 with st.expander("净值历史数据（最近20条）"):
-                    st.dataframe(df_nav.tail(20), use_container_width=True, hide_index=True)
+                    st.dataframe(df_nav.tail(20), width='stretch', hide_index=True)
             else:
                 st.warning("未获取到净值历史数据")
 else:

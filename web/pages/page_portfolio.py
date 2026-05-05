@@ -46,10 +46,10 @@ st.title("📋 持仓管理")
 # ── 顶部操作栏 ─────────────────────────────────────────────────────
 c_add, c_refresh, _ = st.columns([1, 1, 4])
 with c_add:
-    if st.button("➕ 新增持仓", use_container_width=True):
+    if st.button("➕ 新增持仓", width='stretch'):
         st.session_state["show_add"] = True
 with c_refresh:
-    if st.button("🔄 刷新行情", use_container_width=True):
+    if st.button("🔄 刷新行情", width='stretch'):
         st.session_state["refresh"] = True
 
 if "show_add" not in st.session_state:
@@ -161,7 +161,7 @@ def _highlight_row(row):
     return [""] * len(row)
 
 styled = df_display.style.apply(_highlight_row, axis=1)
-st.dataframe(styled, use_container_width=True, hide_index=True)
+st.dataframe(styled, width='stretch', hide_index=True)
 
 st.caption(f"📌 已选：{selected_pos.name}（{selected_pos.code}）")
 
@@ -169,34 +169,31 @@ st.caption(f"📌 已选：{selected_pos.name}（{selected_pos.code}）")
 ec1, ec2, ec3 = st.columns(3)
 
 with ec1:
-    del_key = f"confirm_del_{selected_pos.id}"
-    if st.button("🗑️ 删除持仓", use_container_width=True, key="btn_del"):
-        st.session_state[del_key] = True
-
-    # 确认提示
-    if st.session_state.get(del_key):
-        st.warning(f"⚠️ 确认删除「{selected_pos.name}（{selected_pos.code}）」？此操作不可撤销！")
-        cc1, cc2 = st.columns(2)
-        with cc1:
-            if st.button("✅ 确认删除", key="btn_del_confirm", use_container_width=True):
-                if delete_position(selected_pos.id):
-                    st.success(f"已删除 {selected_pos.name}（{selected_pos.code}）")
-                    del st.session_state[del_key]
+    if st.button("🗑️ 删除持仓", width='stretch', key="btn_del"):
+        # 用 dialog 弹窗确认
+        @st.dialog(f"确认删除持仓")
+        def confirm_delete():
+            st.warning(f"⚠️ 确认删除「{selected_pos.name}（{selected_pos.code}）」？\n\n此操作不可撤销！")
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                if st.button("✅ 确认删除", width='stretch', key="btn_del_confirm"):
+                    if delete_position(selected_pos.id):
+                        st.success(f"已删除 {selected_pos.name}（{selected_pos.code}）")
+                        st.rerun()
+                    else:
+                        st.error("删除失败")
+            with cc2:
+                if st.button("❌ 取消", width='stretch', key="btn_del_cancel"):
                     st.rerun()
-                else:
-                    st.error("删除失败")
-        with cc2:
-            if st.button("❌ 取消", key="btn_del_cancel", use_container_width=True):
-                del st.session_state[del_key]
-                st.rerun()
+        confirm_delete()
 
 with ec2:
-    if st.button("✏️ 编辑持仓", use_container_width=True):
+    if st.button("✏️ 编辑持仓", width='stretch'):
         st.session_state["edit_id"] = selected_pos.id
         st.rerun()
 
 with ec3:
-    if st.button("🔍 查看预警", type="primary", use_container_width=True):
+    if st.button("🔍 查看预警", type="primary", width='stretch'):
         st.session_state["show_alerts"] = True
         st.session_state["alert_pos_idx"] = sel_idx
 

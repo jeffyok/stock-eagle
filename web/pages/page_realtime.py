@@ -66,7 +66,7 @@ if code:
         price = float(latest.get("收盘", latest.get("close", 0)))
         pre_close = float(prev.get("收盘", prev.get("close", price)))
         chg = (price - pre_close) / pre_close * 100 if pre_close else 0
-        vol = float(latest.get("成交量", latest.get("volume", 0))) / 1e8
+        vol = float(latest.get("成交量", latest.get("volume", 0))) / 1e4
         amt = float(latest.get("成交额", latest.get("amount", 0))) / 1e8
         turn = float(latest.get("换手率", latest.get("turnover", 0)))
         ma5 = df["收盘"].astype(float).tail(5).mean()
@@ -88,18 +88,18 @@ if code:
                 f"</div>"
             )
 
-        # 第一行：价格 + 开/高/低/量
-        r1 = st.columns([1.2, 1, 1, 1, 1.2])
+        # 第一行：最新价(含涨跌幅标签) + 开/高/低/量
+        r1 = st.columns([1, 1, 1, 1, 1])
         r1[0].markdown(
-            card("最新价",
+            card(f"最新价(<span style='color:{chg_color}'>{chg_icon} {chg:+.2f}%</span>)",
                   f"<span style='color:{chg_color}'>{price:.2f}</span>",
-                  f"<span style='color:{chg_color}'>{chg_icon} {chg:+.2f}%</span>",
+                  "",
                   price_card_class),
             unsafe_allow_html=True)
         r1[1].markdown(card("今开", f"{latest.get('开盘', latest.get('open', 0)):.2f}"), unsafe_allow_html=True)
         r1[2].markdown(card("最高", f"{latest.get('最高', latest.get('high', 0)):.2f}"), unsafe_allow_html=True)
         r1[3].markdown(card("最低", f"{latest.get('最低', latest.get('low', 0)):.2f}"), unsafe_allow_html=True)
-        r1[4].markdown(card("成交量", f"{vol:.2f}亿手"), unsafe_allow_html=True)
+        r1[4].markdown(card("成交量", f"{vol:.2f}万手"), unsafe_allow_html=True)
 
         # 第二行：成交/换手/昨收/MA
         r2 = st.columns(5)
@@ -166,7 +166,7 @@ if code:
             fig.update_yaxes(title_text="价格（元）", row=1, col=1)
             fig.update_yaxes(title_text="成交量", row=2, col=1)
 
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
         except ImportError:
             st.info("安装 plotly 可显示交互式 K线图：pip install plotly")
@@ -213,7 +213,7 @@ if code:
         # ── 近期数据表 ────────────────────────────────────────────
         with st.expander("近期日线数据（最近20条）"):
             show_cols = [c for c in df.columns if c in ["日期","开盘","最高","最低","收盘","成交量","成交额","换手率"]]
-            st.dataframe(df[show_cols].tail(20), use_container_width=True)
+            st.dataframe(df[show_cols].tail(20), width='stretch')
 
     except Exception as e:
         st.exception(e)

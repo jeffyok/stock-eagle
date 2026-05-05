@@ -97,7 +97,7 @@ if run:
             ))
             fig.add_hline(y=initial_cash, line_dash="dash", line_color="gray", annotation_text="初始资金")
             fig.update_layout(height=400, xaxis_title="日期", yaxis_title="账户价值（元）", hovermode="x unified")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         else:
             st.caption("无权益曲线数据（请确认回测期内有数据）")
     except ImportError:
@@ -113,7 +113,7 @@ if run:
                 trades_show[col] = trades_show[col].round(2)
         if "return_pct" in trades_show.columns:
             trades_show["return_pct"] = trades_show["return_pct"].round(2)
-        st.dataframe(trades_show, use_container_width=True)
+        st.dataframe(trades_show, width='stretch')
     else:
         st.info("该周期内无交易信号")
 else:

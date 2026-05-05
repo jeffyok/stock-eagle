@@ -3,7 +3,6 @@
 追踪东方财富/百度热搜，腾讯热搜通过 westock-data 获取
 """
 from typing import List, Dict, Any
-import subprocess, json, sys
 
 
 class HotSearchMonitor:
@@ -41,19 +40,16 @@ class HotSearchMonitor:
             import akshare as ak
             import datetime
             d = date or datetime.datetime.now().strftime("%Y%m%d")
-            # 尝试两种可能的函数签名
-            try:
-                df = ak.stock_hot_search_baidu(symbol=d)
-            except TypeError:
-                df = ak.stock_hot_search_baidu(date=d)
-            if df is None or getattr(df, "empty", True):
+            # 正确签名：symbol="A股"（默认），date="20260505"
+            df = ak.stock_hot_search_baidu(symbol="A股", date=d)
+            if df is None or getattr(df, "empty", True) or df.empty:
                 return []
             records = []
             for _, row in df.iterrows():
                 records.append({
                     "rank": len(records) + 1,
-                    "keyword": str(row.get("关键词", "")),
-                    "hot_index": float(row.get("热度指数", 0) or 0),
+                    "keyword": str(row.get("名称/代码", "")).strip(),
+                    "hot_index": float(row.get("综合热度", 0) or 0),
                 })
             return records[:20]
         except Exception as e:
@@ -63,26 +59,11 @@ class HotSearchMonitor:
     def tencent(self) -> List[Dict]:
         """
         腾讯自选股热搜 Top 20
-        通过 westock-data skillhub 获取
+        通过 AKShare 的 stock_hot_rank_tencent 获取
         """
         try:
-            result = subprocess.run(
-                [sys.executable, "-m", "npx", "--yes", "westock-data-skillhub@latest", "hot", "stock"],
-                capture_output=True, text=True, timeout=30
-            )
-            if result.returncode != 0:
-                print(f"westock-data hot 失败: {result.stderr}")
-                return []
-            data = json.loads(result.stdout)
-            records = []
-            for i, item in enumerate(data[:20]):
-                records.append({
-                    "rank": i + 1,
-                    "code": str(item.get("code", "")),
-                    "name": str(item.get("name", "")),
-                    "pct_chg": float(item.get("pct_chg", 0) or 0),
-                })
-            return records
+            from app.data.akshare_source import AKShareSource
+            return AKShareSource().get_hot_search_tencent()
         except Exception as e:
             print(f"腾讯热搜获取失败: {e}")
             return []

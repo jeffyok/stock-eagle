@@ -68,8 +68,12 @@ def apply_style():
         .metric-card-price-down .value,
         .metric-card-price-down .delta { color: #00b050 !important; }
 
-        /* Streamlit 列间距 */
-        section[data-testid="stMainBlockContainer"] > div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+        /* Streamlit 列间距 & 行间 gap */
+        div[data-testid="stHorizontalBlock"] {
+            gap: 12px !important;
+            margin-bottom: 16px !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
             padding: 0 8px !important;
         }
 

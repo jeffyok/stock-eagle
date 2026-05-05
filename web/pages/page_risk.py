@@ -67,7 +67,7 @@ if num_rows:
             "单位": st.column_config.TextColumn("单位", disabled=True),
             "启用": st.column_config.CheckboxColumn("启用"),
         },
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         key="risk_rules_editor",
     )
@@ -102,7 +102,7 @@ if sw_rows:
             "说明": st.column_config.TextColumn("说明", disabled=True),
             "启用": st.column_config.CheckboxColumn("启用"),
         },
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         key="risk_switch_editor",
     )
@@ -117,7 +117,7 @@ st.markdown("---")
 # ── 实时风控检查 ───────────────────────────────────────────────────
 st.subheader("实时风控检查")
 
-if st.button("🔍 立即检查", type="primary", use_container_width=True):
+if st.button("🔍 立即检查", type="primary", width='stretch'):
     with st.spinner("正在检查持仓…"):
         try:
             positions = get_positions()

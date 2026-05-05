@@ -118,7 +118,7 @@ with tab2:
             stocks = summary.get("stocks", [])
             if stocks:
                 df_stocks = pd.DataFrame(stocks)
-                st.dataframe(df_stocks, use_container_width=True, hide_index=True)
+                st.dataframe(df_stocks, width='stretch', hide_index=True)
             else:
                 st.caption("无明细数据")
 
@@ -128,7 +128,7 @@ with tab2:
                 hot_seats = analyzer.identify_hot_seats(date_str, top_n=10)
                 if hot_seats:
                     df_seats = pd.DataFrame(hot_seats)
-                    st.dataframe(df_seats, use_container_width=True, hide_index=True)
+                    st.dataframe(df_seats, width='stretch', hide_index=True)
                 else:
                     st.caption("未发现活跃游资席位")
             except Exception as e:
@@ -158,7 +158,7 @@ with tab3:
                 top20 = scorer.rank_by_financial(top_n=20)
                 if top20:
                     df_top = pd.DataFrame(top20)
-                    st.dataframe(df_top, use_container_width=True, hide_index=True)
+                    st.dataframe(df_top, width='stretch', hide_index=True)
                 else:
                     st.caption("暂无评分数据")
 
@@ -167,7 +167,7 @@ with tab3:
                 recent = analyzer.get_recent_lhb(days=7, top_n=20)
                 if recent:
                     df_recent = pd.DataFrame(recent)
-                    st.dataframe(df_recent, use_container_width=True, hide_index=True)
+                    st.dataframe(df_recent, width='stretch', hide_index=True)
                 else:
                     st.caption("近7日无龙虎榜数据")
 
@@ -176,7 +176,7 @@ with tab3:
                 sector_report = sector_m.get_report()
                 if sector_report.get("rising_sectors"):
                     df_rise = pd.DataFrame(sector_report["rising_sectors"])
-                    st.dataframe(df_rise, use_container_width=True, hide_index=True)
+                    st.dataframe(df_rise, width='stretch', hide_index=True)
                 else:
                     st.caption("暂无板块异动")
 

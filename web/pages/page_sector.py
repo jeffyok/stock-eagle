@@ -31,7 +31,8 @@ with tab1:
 
     with col2:
         if run_sector or "sector_data" not in st.session_state:
-            with st.spinner("获取板块数据…"):
+            st.session_state["sector_data"] = None  # 重置状态
+            with st.spinner("获取板块数据（首次约 10s，已缓存则秒开）…"):
                 try:
                     from app.tracker.sector_monitor import SectorMonitor
                     m = SectorMonitor()
@@ -60,7 +61,7 @@ with tab1:
             rising = st.session_state["sector_rising"]
             st.success(f"发现 {len(rising)} 个异动板块（涨幅 > {min_pct}%）")
             df_rise = pd.DataFrame(rising)
-            st.dataframe(df_rise, use_container_width=True, hide_index=True)
+            st.dataframe(df_rise, width='stretch', hide_index=True)
         elif "sector_rising" in st.session_state:
             st.info(f"当前无异动板块（阈值 {min_pct}%）")
 
@@ -68,7 +69,7 @@ with tab1:
         with st.expander("全部板块排行（Top 30）"):
             if "sector_data" in st.session_state and st.session_state.get("sector_data"):
                 df_all = pd.DataFrame(st.session_state["sector_data"][:30])
-                st.dataframe(df_all, use_container_width=True, hide_index=True)
+                st.dataframe(df_all, width='stretch', hide_index=True)
 
 # ── Tab2：资金流向 ─────────────────────────────────────────
 with tab2:
@@ -79,7 +80,12 @@ with tab2:
 
     with col1:
         st.markdown("**主力资金排行**")
-        indicator = st.selectbox("排行类型", ["今日", "3日排行", "5日排行", "10日排行"], key="mf_indicator")
+        if st.button("清除缓存", key="btn_clear_money", help="清除旧缓存数据，强制重新获取"):
+            for k in ["money_rank", "north_flow"]:
+                if k in st.session_state:
+                    del st.session_state[k]
+            st.rerun()
+        indicator = st.selectbox("排行类型", ["今日", "3日", "5日", "10日"], key="mf_indicator")
         run_money = st.button("刷新资金数据", key="btn_money", type="primary")
 
         if run_money:
@@ -93,8 +99,12 @@ with tab2:
                     st.exception(e)
 
         if "money_rank" in st.session_state and st.session_state["money_rank"]:
-            df_money = pd.DataFrame(st.session_state["money_rank"][:30])
-            st.dataframe(df_money, use_container_width=True, hide_index=True)
+            df_money = pd.DataFrame(st.session_state["money_rank"][:30]).rename(columns={
+                "code": "代码", "name": "名称", "close": "最新价",
+                "pct_chg": "涨跌幅(%)", "net_mf": "主力净流入(元)",
+                "net_mf_pct": "净占比(%)", "net_mf_big": "超大单(元)", "net_mf_small": "小单(元)"
+            })
+            st.dataframe(df_money, width='stretch', hide_index=True)
         else:
             st.caption("暂无数据，请点击刷新")
 
@@ -113,8 +123,10 @@ with tab2:
                     st.exception(e)
 
         if "north_flow" in st.session_state and st.session_state["north_flow"]:
-            df_north = pd.DataFrame(st.session_state["north_flow"])
-            st.dataframe(df_north, use_container_width=True, hide_index=True)
+            df_north = pd.DataFrame(st.session_state["north_flow"]).rename(columns={
+                "date": "日期", "north_net": "北向净流入(元)", "north_index": "收盘指数"
+            })
+            st.dataframe(df_north, width='stretch', hide_index=True)
 
 # ── Tab3：热搜监控 ─────────────────────────────────────────
 with tab3:
@@ -139,16 +151,20 @@ with tab3:
                         em_data = m.eastmoney()[:top_n]
                         if em_data:
                             st.markdown("**东方财富热搜**")
-                            df_em = pd.DataFrame(em_data)
-                            st.dataframe(df_em, use_container_width=True, hide_index=True)
+                            df_em = pd.DataFrame(em_data).rename(columns={
+                                "rank": "排名", "code": "代码", "name": "股票名称", "pct_chg": "涨跌幅(%)"
+                            })
+                            st.dataframe(df_em, width='stretch', hide_index=True)
 
                     if source == "百度" or source == "全部聚合":
                         try:
                             baidu_data = m.baidu()
                             if baidu_data:
                                 st.markdown("**百度股票热搜**")
-                                df_bd = pd.DataFrame(baidu_data)
-                                st.dataframe(df_bd, use_container_width=True, hide_index=True)
+                                df_bd = pd.DataFrame(baidu_data).rename(columns={
+                                    "rank": "排名", "keyword": "关键词", "hot_index": "热度指数"
+                                })
+                                st.dataframe(df_bd, width='stretch', hide_index=True)
                         except Exception:
                             st.caption("百度热搜获取失败（可能接口不可用）")
 
@@ -157,8 +173,10 @@ with tab3:
                             tx_data = m.tencent()
                             if tx_data:
                                 st.markdown("**腾讯自选股热搜**")
-                                df_tx = pd.DataFrame(tx_data)
-                                st.dataframe(df_tx, use_container_width=True, hide_index=True)
+                                df_tx = pd.DataFrame(tx_data).rename(columns={
+                                    "rank": "排名", "code": "代码", "name": "股票名称", "pct_chg": "涨跌幅(%)"
+                                })
+                                st.dataframe(df_tx, width='stretch', hide_index=True)
                         except Exception:
                             st.caption("腾讯热搜获取失败（需要 westock-data）")
 
@@ -194,7 +212,7 @@ with tab4:
                 st.markdown("**板块异动**")
                 rising = sector_rpt.get("rising_sectors", [])
                 if rising:
-                    st.dataframe(pd.DataFrame(rising[:10]), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(rising[:10]), width='stretch', hide_index=True)
                 else:
                     st.caption("今日无异动板块")
 
@@ -202,13 +220,21 @@ with tab4:
                 st.markdown("**主力资金异动**")
                 money_stocks = money_rpt.get("top_inflow", [])
                 if money_stocks:
-                    st.dataframe(pd.DataFrame(money_stocks[:10]), use_container_width=True, hide_index=True)
+                    df_money = pd.DataFrame(money_stocks[:10]).rename(columns={
+                        "code": "代码", "name": "名称", "close": "最新价",
+                        "pct_chg": "涨跌幅(%)", "net_mf": "主力净流入(元)",
+                        "net_mf_pct": "净占比(%)", "net_mf_big": "超大单(元)", "net_mf_small": "小单(元)"
+                    })
+                    st.dataframe(df_money, width='stretch', hide_index=True)
 
                 # 热搜摘要
                 st.markdown("**市场热搜 Top 10**")
                 hot_list = hot_rpt.get("all_hot", [])
                 if hot_list:
-                    st.dataframe(pd.DataFrame(hot_list[:10]), use_container_width=True, hide_index=True)
+                    df_hot = pd.DataFrame(hot_list[:10]).rename(columns={
+                        "rank": "排名", "source": "来源", "code": "代码", "name": "股票名称", "pct_chg": "涨跌幅(%)"
+                    })
+                    st.dataframe(df_hot, width='stretch', hide_index=True)
 
             except Exception as e:
                 st.exception(e)
