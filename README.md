@@ -1,6 +1,6 @@
 # StockEagle 🦅
 
-**StockEagle** — 开源量化智能选股选基系统
+**StockEagle** — 猎鹰量化智能选股选基系统
 
 > 用数据和策略替代情绪，用信号和规则替代直觉。
 
@@ -92,7 +92,7 @@ stock-eagle/
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/yourusername/stock-eagle.git
+git clone https://github.com/jeffyok/stock-eagle.git
 cd stock-eagle
 
 # 2. 安装依赖
