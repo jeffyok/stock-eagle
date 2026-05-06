@@ -16,11 +16,12 @@ class HotSearchMonitor:
 
     def eastmoney(self) -> List[Dict]:
         """东方财富个股热搜 Top 20"""
+        # ── 主源：AKShare ────────────────────────────────────────
         try:
             import akshare as ak
             df = ak.stock_hot_rank_em()
             if df is None or df.empty:
-                return []
+                raise ValueError("返回空数据")
             records = []
             for _, row in df.iterrows():
                 records.append({
@@ -31,8 +32,29 @@ class HotSearchMonitor:
                 })
             return records[:20]
         except Exception as e:
-            print(f"东财热搜获取失败: {e}")
-            return []
+            print(f"东财热搜获取失败: {e}，降级到 westock-data…")
+
+        # ── 降级：westock-data ────────────────────────────────
+        try:
+            from app.data.westock_data import WestockData
+            data = WestockData().hot()
+            if data:
+                records = []
+                for i, item in enumerate(data[:20], 1):
+                    # 只保留 A 股（sz/sh/bj 开头）
+                    code = str(item.get("code", ""))
+                    if code.startswith(("sz", "sh", "bj")):
+                        records.append({
+                            "rank": i,
+                            "code": code,
+                            "name": item.get("name", ""),
+                            "pct_chg": float(item.get("pct_chg", 0)),
+                        })
+                return records
+        except Exception as e:
+            print(f"westock-data 热搜降级也失败: {e}")
+
+        return []
 
     def baidu(self, date: str | None = None) -> List[Dict]:
         """百度股票热搜（date 格式 YYYYMMDD，默认今日）"""
