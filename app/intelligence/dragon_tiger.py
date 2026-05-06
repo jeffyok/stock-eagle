@@ -219,7 +219,16 @@ class DragonTigerAnalyzer:
         for r in records:
             reason = str(r.get("reason", ""))
             name = r.get("name", "")
-            stocks.append(r)
+            # 字段转中文
+            stock_info = {
+                "代码": r.get("code", ""),
+                "名称": r.get("name", ""),
+                "上榜原因": r.get("reason", ""),
+                "买入额(亿)": round(r.get("buy_amount", 0) / 1e8, 2),
+                "卖出额(亿)": round(r.get("sell_amount", 0) / 1e8, 2),
+                "净额(亿)": round(r.get("net_amount", 0) / 1e8, 2),
+            }
+            stocks.append(stock_info)
             if "涨" in reason or "涨停" in reason:
                 up_limit += 1
             if "跌" in reason or "跌停" in reason:

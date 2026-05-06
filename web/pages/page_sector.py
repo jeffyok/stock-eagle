@@ -99,10 +99,15 @@ with tab2:
                     st.exception(e)
 
         if "money_rank" in st.session_state and st.session_state["money_rank"]:
-            df_money = pd.DataFrame(st.session_state["money_rank"][:30]).rename(columns={
+            df_money = pd.DataFrame(st.session_state["money_rank"][:30]).copy()
+            # 单位转换：元 → 亿
+            for col in ["net_mf", "net_mf_big", "net_mf_small"]:
+                if col in df_money.columns:
+                    df_money[col] = df_money[col] / 1e8
+            df_money = df_money.rename(columns={
                 "code": "代码", "name": "名称", "close": "最新价",
-                "pct_chg": "涨跌幅(%)", "net_mf": "主力净流入(元)",
-                "net_mf_pct": "净占比(%)", "net_mf_big": "超大单(元)", "net_mf_small": "小单(元)"
+                "pct_chg": "涨跌幅(%)", "net_mf": "主力净流入(亿)",
+                "net_mf_pct": "净占比(%)", "net_mf_big": "超大单(亿)", "net_mf_small": "小单(亿)"
             })
             st.dataframe(df_money, width='stretch', hide_index=True)
         else:
@@ -220,10 +225,15 @@ with tab4:
                 st.markdown("**主力资金异动**")
                 money_stocks = money_rpt.get("top_inflow", [])
                 if money_stocks:
-                    df_money = pd.DataFrame(money_stocks[:10]).rename(columns={
+                    df_money = pd.DataFrame(money_stocks[:10]).copy()
+                    # 单位转换：元 → 亿
+                    for col in ["net_mf", "net_mf_big", "net_mf_small"]:
+                        if col in df_money.columns:
+                            df_money[col] = df_money[col] / 1e8
+                    df_money = df_money.rename(columns={
                         "code": "代码", "name": "名称", "close": "最新价",
-                        "pct_chg": "涨跌幅(%)", "net_mf": "主力净流入(元)",
-                        "net_mf_pct": "净占比(%)", "net_mf_big": "超大单(元)", "net_mf_small": "小单(元)"
+                        "pct_chg": "涨跌幅(%)", "net_mf": "主力净流入(亿)",
+                        "net_mf_pct": "净占比(%)", "net_mf_big": "超大单(亿)", "net_mf_small": "小单(亿)"
                     })
                     st.dataframe(df_money, width='stretch', hide_index=True)
 

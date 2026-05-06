@@ -55,13 +55,65 @@ class StockScorer:
             2,
         )
 
+        # 推荐：80+强烈推荐，60+建议买入，40+持有，40-建议观望
+        if total >= 80:
+            rec = "强烈买入 ⭐⭐⭐"
+        elif total >= 60:
+            rec = "建议买入 ⭐⭐"
+        elif total >= 40:
+            rec = "谨慎持有 ⭐"
+        else:
+            rec = "建议观望"
+
         return {
             "code": code,
             "total_score": total,
+            "recommendation": rec,
             "fundamentals": fin_score,
             "technical": tech_score,
             "money_flow": money_score,
             "sentiment": lhb_score,
+            # 页面期望的 sub_scores 格式
+            "sub_scores": {
+                "fundamental": fin_score.get("total", 0),
+                "technical": tech_score.get("total", 0),
+                "money": money_score.get("total", 0),
+                "sentiment": lhb_score.get("total", 0),
+            },
+            # 详细数据（中文字段）
+            "detail": {
+                "总分": f"{total:.0f}",
+                "推荐": rec,
+                "基本面": f"{fin_score.get('total', 0):.0f} 分",
+                "技术面": f"{tech_score.get('total', 0):.0f} 分",
+                "资金面": f"{money_score.get('total', 0):.0f} 分",
+                "舆情": f"{lhb_score.get('total', 0):.0f} 分",
+                "基本面详情": {
+                    "ROE": fin.get("roe", 0),
+                    "营收增速": f"{fin.get('revenue_growth', 0):.2f}%",
+                    "利润增速": f"{fin.get('profit_growth', 0):.2f}%",
+                    "市盈率PE": fin.get("pe", 0),
+                    "市净率PB": fin.get("bps", 0),
+                },
+                "技术面详情": {
+                    "均线多头": "是" if tech_score.get("details", {}).get("ma_bullish_pct", 0) > 60 else "否",
+                    "均线多头排列": f"{tech_score.get('details', {}).get('ma_bullish_pct', 0):.1f}%",
+                    "MACD金叉": "是" if tech_score.get("details", {}).get("macd_bullish") else "否",
+                    "RSI": tech_score.get("details", {}).get("rsi", 0),
+                    "布林带位置": tech_score.get("details", {}).get("bb_position", 0),
+                    "量比": tech_score.get("details", {}).get("volume_ratio", 0),
+                },
+                "资金面详情": {
+                    "主力净流入": f"{money_score.get('details', {}).get('net_mf', 0):.2f} 元",
+                    "超大单净流入": f"{money_score.get('details', {}).get('net_mf_big', 0):.2f} 元",
+                    "小单净流入": f"{money_score.get('details', {}).get('net_mf_small', 0):.2f} 元",
+                    "净流入占比": f"{money_score.get('details', {}).get('inflow_ratio', 0):.2f}%",
+                },
+                "舆情详情": {
+                    "30天上榜次数": lhb_score.get("details", {}).get("lhb_count_30d", 0),
+                    "净买入金额": f"{lhb_score.get('details', {}).get('lhb_net_amount', 0):.2f} 亿",
+                },
+            },
         }
 
     # ── 基本面评分 ───────────────────────────────────────────────────────────

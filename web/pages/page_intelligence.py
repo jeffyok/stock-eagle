@@ -77,7 +77,12 @@ with tab1:
             detail = result.get("detail", {})
             if isinstance(detail, dict):
                 for k, v in detail.items():
-                    st.write(f"**{k}**：{v}")
+                    if isinstance(v, dict):
+                        st.write(f"**{k}**：")
+                        for sub_k, sub_v in v.items():
+                            st.write(f"  - {sub_k}: {sub_v}")
+                    else:
+                        st.write(f"**{k}**：{v}")
             else:
                 st.write(detail)
 
