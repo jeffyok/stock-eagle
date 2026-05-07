@@ -116,14 +116,30 @@ class PortfolioService:
         """逐只拉取最近日K收盘价，填充到 position._current_price"""
         if not positions:
             return positions
-        import akshare as ak
-        from datetime import date, timedelta
-
-        end = date.today()
-        start = end - timedelta(days=10)  # 取最近10天，取最后一天即可
+        from app.data.westock_data import WestockData
+        w = WestockData()
 
         for p in positions:
             try:
+                # 优先用 westock-data 获取K线
+                kline = w.kline(p.code, period="day", count=10)
+                if kline:
+                    # 按日期升序排序，确保最后一条是最新的
+                    kline.sort(key=lambda x: x.get("date", ""))
+                    latest = kline[-1]
+                    close = float(latest.get("close", 0))
+                    if close > 0:
+                        p.set_current_price(Decimal(str(close)))
+                        continue
+            except Exception as e:
+                print(f"westock-data 获取 {p.code} 失败: {e}")
+
+            # 降级：尝试 akshare
+            try:
+                import akshare as ak
+                from datetime import date, timedelta
+                end = date.today()
+                start = end - timedelta(days=10)
                 market = p.code[:2]  # sh / sz / bj
                 stock_code = p.code[2:]
                 df = ak.stock_zh_a_hist(
@@ -134,12 +150,14 @@ class PortfolioService:
                     adjust="qfq",
                 )
                 if df is not None and not df.empty:
+                    df = df.sort_values(by="日期", ascending=True)
                     latest = df.iloc[-1]
                     close = float(latest.get("收盘", 0))
                     if close > 0:
                         p.set_current_price(Decimal(str(close)))
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"akshare 获取 {p.code} 也失败: {e}")
+
         return positions
 
 

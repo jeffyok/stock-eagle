@@ -48,8 +48,8 @@ class MoneyMonitor:
         try:
             import akshare as ak
             df = ak.stock_hsgt_hold_stock_em(symbol=market)
-            if df.empty:
-                return []
+            if df is None or df.empty:
+                raise ValueError("返回空数据")
             records = []
             for _, row in df.iterrows():
                 records.append({
