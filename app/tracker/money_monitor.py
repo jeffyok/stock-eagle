@@ -33,7 +33,17 @@ class MoneyMonitor:
 
     def top_outflow(self, n: int = 20) -> List[Dict]:
         all_s = self.stock_rank("今日")
-        return sorted(all_s, key=lambda x: x.get("net_mf", 0))[:n]
+        return sorted(all_s, key=lambda x: x.get("net_mf") or 0)[:n]
+
+    # ── 行业资金流向 ─────────────────────────────────────────────────
+
+    def industry_flow(self, top_n: int = 20) -> List[Dict]:
+        """获取行业资金流向排行"""
+        try:
+            return self.ds.get_industry_fund_flow(top_n)
+        except Exception as e:
+            print(f"行业资金流向获取失败: {e}")
+            return []
 
     # ── 北向资金 ─────────────────────────────────────────────────────
 
@@ -68,7 +78,7 @@ class MoneyMonitor:
 
     def detect_inflow(self, min_amt: float = 1e8, n: int = 20) -> List[Dict]:
         stocks = self.stock_rank("今日")
-        return [s for s in stocks if s.get("net_mf", 0) >= min_amt][:n]
+        return [s for s in stocks if (s.get("net_mf") or 0) >= min_amt][:n]
 
     def detect_north(self) -> Dict[str, Any]:
         flow = self.north_flow(5)
@@ -90,8 +100,8 @@ class MoneyMonitor:
         outflow = self.top_outflow(10)
         north = self.detect_north()
 
-        in_amt = sum(s.get("net_mf", 0) for s in inflow)
-        out_amt = abs(sum(s.get("net_mf", 0) for s in outflow))
+        in_amt = sum(s.get("net_mf") or 0 for s in inflow)
+        out_amt = abs(sum(s.get("net_mf") or 0 for s in outflow))
         sentiment = (
             "资金净流入（做多）" if in_amt > out_amt * 1.5
             else "资金净流出（偏空）" if out_amt > in_amt * 1.5

@@ -14,7 +14,7 @@ class AKShareSource(BaseDataSource):
     def get_stock_realtime(self, code: str) -> Optional[Dict]:
         """获取实时行情 - 需要市场前缀代码如 sh600519"""
         try:
-            df = ak.stock_zh_a_spot_em()
+            df = self._ak_retry(ak.stock_zh_a_spot_em)
             row = df[df["代码"] == code.replace("sh", "").replace("sz", "").replace("bj", "")]
             if row.empty:
                 return None
@@ -41,7 +41,7 @@ class AKShareSource(BaseDataSource):
         try:
             market = code[:2]  # sh/sz/bj
             stock_code = code[2:]
-            df = ak.stock_zh_a_hist(
+            df = self._ak_retry(ak.stock_zh_a_hist,
                 symbol=stock_code,
                 period="daily",
                 start_date=start.replace("-", ""),
@@ -97,7 +97,7 @@ class AKShareSource(BaseDataSource):
     def get_stock_basic(self) -> List[Dict]:
         """获取股票基本信息"""
         try:
-            df = ak.stock_info_a_code_name()
+            df = self._ak_retry(ak.stock_info_a_code_name)
             records = []
             for _, row in df.iterrows():
                 code = str(row["code"])
@@ -141,12 +141,41 @@ class AKShareSource(BaseDataSource):
 
     # --- 扩展方法（AKShare 特有）---
 
+    def _ak_retry(self, func, *args, retries: int = 3, base_delay: float = 2.0, **kwargs):
+        """
+        带重试 + 指数退避的 AKShare 调用
+        - 处理 RemoteDisconnected、ConnectionAborted 等临时网络故障
+        - 每次重试等待 base_delay * 2^attempt 秒（2s → 4s → 8s）
+        """
+        import time
+        last_err = None
+        for attempt in range(retries):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                last_err = e
+                err_str = str(e).lower()
+                # 只对网络相关错误重试，代码/数据类错误直接抛
+                is_network = any(kw in err_str for kw in [
+                    "remote end closed", "connection aborted",
+                    "connection reset", "connection refused",
+                    "timeout", "read timed out", "max retries",
+                    "temporarily unavailable",
+                ])
+                if is_network and attempt < retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    print(f"  ⚠ AKShare 网络波动（{attempt+1}/{retries}），{delay:.1f}s 后重试: {e}")
+                    time.sleep(delay)
+                else:
+                    break
+        raise last_err
+
     def get_sector_spot(self) -> List[Dict]:
-        """获取板块实时行情（优化：to_dict 替代 iterrows）"""
-        # ── 主源：AKShare ────────────────────────────────────────
+        """获取板块实时行情"""
+        # ── 主源：AKShare（带重试）──────────────────────────────────
         try:
-            df = ak.stock_board_industry_name_em()
-            if df.empty:
+            df = self._ak_retry(ak.stock_board_industry_name_em)
+            if df is None or df.empty:
                 raise ValueError("返回空数据")
             df = df.rename(columns={
                 "板块代码": "sector_code",
@@ -156,28 +185,27 @@ class AKShareSource(BaseDataSource):
             })
             records = df.to_dict("records")
             for r in records:
-                r["pct_chg"] = float(r.get("pct_chg", 0))
-                r["total_market"] = float(r.get("total_market", 0))
+                r["pct_chg"] = self._safe_float(r.get("pct_chg", 0))
+                r["total_market"] = self._safe_float(r.get("total_market", 0))
             records.sort(key=lambda x: x.get("pct_chg", 0), reverse=True)
             return records
         except Exception as e:
             print(f"AKShare 板块行情获取失败: {e}，降级到 westock-data…")
 
-        # ── 降级：westock-data ────────────────────────────────
+        # ── 降级：westock-data ─────────────────────────────────────
         try:
             from app.data.westock_data import WestockData
             data = WestockData().board()
             if data and "sector" in data:
                 records = []
                 for item in data["sector"]:
-                    # 跳过表头行
                     if item.get("name") == "name":
                         continue
                     try:
                         records.append({
                             "sector_code": "",
                             "sector_name": item.get("name", ""),
-                            "pct_chg": float(item.get("changePct", 0)),
+                            "pct_chg": self._safe_float(item.get("changePct", 0)),
                             "total_market": 0,
                         })
                     except (ValueError, TypeError):
@@ -193,7 +221,7 @@ class AKShareSource(BaseDataSource):
         """获取个股资金流向"""
         try:
             stock_code = code[2:]
-            df = ak.stock_individual_fund_flow_rank(indicator="今日")
+            df = self._ak_retry(ak.stock_individual_fund_flow_rank, indicator="今日")
             if df is None or df.empty:
                 raise ValueError("返回空数据")
             row = df[df["代码"] == stock_code]
@@ -232,19 +260,31 @@ class AKShareSource(BaseDataSource):
         """
         try:
             date_fmt = date.replace("-", "")
-            # stock_lhb_detail_em 参数为 start_date/end_date
             df = ak.stock_lhb_detail_em(start_date=date_fmt, end_date=date_fmt)
-            if df is None or df.empty:
+            if df is None or getattr(df, "empty", True) or df.empty:
                 return []
+
+            # AKShare 列名兼容：新版本前缀"龙虎榜"，旧版本无前缀
+            col_map = {}
+            for target, candidates in [
+                ("buy", ["龙虎榜买入额", "买入额"]),
+                ("sell", ["龙虎榜卖出额", "卖出额"]),
+                ("net", ["龙虎榜净买额", "净额"]),
+            ]:
+                for c in candidates:
+                    if c in df.columns:
+                        col_map[target] = c
+                        break
+
             records = []
             for _, row in df.iterrows():
                 records.append({
                     "code": str(row.get("代码", "")),
                     "name": str(row.get("名称", "")),
                     "reason": str(row.get("上榜原因", "")),
-                    "buy_amount": self._safe_float(row.get("买入额", 0)),
-                    "sell_amount": self._safe_float(row.get("卖出额", 0)),
-                    "net_amount": self._safe_float(row.get("净额", 0)),
+                    "buy_amount": self._safe_float(row.get(col_map.get("buy", ""), 0)),
+                    "sell_amount": self._safe_float(row.get(col_map.get("sell", ""), 0)),
+                    "net_amount": self._safe_float(row.get(col_map.get("net", ""), 0)),
                 })
             return records
         except Exception as e:
@@ -290,44 +330,56 @@ class AKShareSource(BaseDataSource):
     def get_stock_money_flow_rank(self, indicator: str = "今日") -> List[Dict]:
         """
         获取个股资金流向排行榜
-        indicator: '今日' | '3日' | '5日' | '10日'
-        兼容带"排行"后缀的旧格式：'3日排行' -> '3日'
+        主力源：akshare stock_fund_flow_individual（即时资金流，5000+股票）
         """
-        _indicator_map = {
-            "今日": "今日",
-            "3日排行": "3日",
-            "5日排行": "5日",
-            "10日排行": "10日",
-            "3日": "3日",
-            "5日": "5日",
-            "10日": "10日",
-        }
-        ak_indicator = _indicator_map.get(indicator, indicator)
-        prefix = ak_indicator
 
-        # ── 主源：AKShare ────────────────────────────────────────
+        def _parse_amount(val) -> float:
+            """解析 '3.55亿' / '9937.50万' 格式"""
+            if val is None or val == '-' or val == '':
+                return 0.0
+            try:
+                s = str(val).strip().replace('%', '')
+                if '亿' in s:
+                    return float(s.replace('亿', '')) * 1e8
+                elif '万' in s:
+                    return float(s.replace('万', '')) * 1e4
+                else:
+                    return float(s)
+            except (ValueError, TypeError):
+                return 0.0
+
+        def _parse_pct(val) -> float:
+            """解析 '20.01%' -> 20.01"""
+            if val is None:
+                return 0.0
+            try:
+                return float(str(val).replace('%', ''))
+            except (ValueError, TypeError):
+                return 0.0
+
+        # ── 主源：AKShare stock_fund_flow_individual（即时，5000+股票）──
         try:
-            df = ak.stock_individual_fund_flow_rank(indicator=ak_indicator)
+            df = self._ak_retry(ak.stock_fund_flow_individual, symbol='即时')
             if df is None or df.empty:
                 raise ValueError("返回空数据")
             records = []
             for _, row in df.iterrows():
                 records.append({
-                    "code": str(row.get("代码", "")),
-                    "name": str(row.get("名称", "")),
+                    "code": str(row.get("股票代码", "")),
+                    "name": str(row.get("股票简称", "")),
                     "close": self._safe_float(row.get("最新价", 0)),
-                    "pct_chg": self._safe_float(row.get(f"{prefix}涨跌幅", 0)),
-                    "net_mf": self._safe_float(row.get(f"{prefix}主力净流入-净额", 0)),
-                    "net_mf_pct": self._safe_float(row.get(f"{prefix}主力净流入-净占比", 0)),
-                    "net_mf_big": self._safe_float(row.get(f"{prefix}超大单净流入-净额", 0)),
-                    "net_mf_small": self._safe_float(row.get(f"{prefix}小单净流入-净额", 0)),
+                    "pct_chg": _parse_pct(row.get("涨跌幅", 0)),
+                    "net_mf": _parse_amount(row.get("净额", 0)),        # 净额：正=流入
+                    "net_mf_pct": 0.0,
+                    "net_mf_big": 0.0,
+                    "net_mf_small": 0.0,
                 })
             records.sort(key=lambda x: x["net_mf"], reverse=True)
             return records
         except Exception as e:
-            print(f"AKShare 资金流向排行获取失败: {e}，降级到 westock-data…")
+            print(f"AKShare stock_fund_flow_individual 获取失败: {e}，降级到 westock-data…")
 
-        # ── 降级：westock-data chip（取收盘价/涨跌幅）───────
+        # ── 降级：westock-data hot() 价格 + asfund() 资金流向 ──
         try:
             from app.data.westock_data import WestockData
             w = WestockData()
@@ -336,23 +388,81 @@ class AKShareSource(BaseDataSource):
             for item in hot_data[:30]:
                 code = str(item.get("code", ""))
                 if code.startswith(("sz", "sh", "bj")):
+                    mf = 0.0
+                    mf_big = 0.0
+                    mf_small = 0.0
+                    try:
+                        fund_data = w.asfund(code)
+                        if fund_data:
+                            mf = fund_data.get("net_mf", 0) or 0
+                            mf_big = fund_data.get("net_mf_big", 0) or 0
+                            mf_small = fund_data.get("net_mf_small", 0) or 0
+                    except Exception:
+                        pass
                     records.append({
                         "code": code,
                         "name": item.get("name", ""),
                         "close": float(item.get("price", 0)),
                         "pct_chg": float(item.get("pct_chg", 0)),
-                        "net_mf": 0,
-                        "net_mf_pct": 0,
-                        "net_mf_big": 0,
-                        "net_mf_small": 0,
+                        "net_mf": mf,
+                        "net_mf_pct": 0.0,
+                        "net_mf_big": mf_big,
+                        "net_mf_small": mf_small,
                     })
-            # 按涨跌幅排序
-            records.sort(key=lambda x: x["pct_chg"], reverse=True)
+            records.sort(key=lambda x: x["net_mf"], reverse=True)
             return records
         except Exception as e:
             print(f"westock-data 降级也失败: {e}")
 
         return []
+
+    def get_industry_fund_flow(self, top_n: int = 20) -> List[Dict]:
+        """
+        获取行业资金流向排行（今日）
+        返回：[{name, change_pct, inflow, outflow, net_flow, company_count, leader, leader_pct}]
+        单位统一为亿元
+        """
+        import akshare as ak
+
+        def _parse_amount(val) -> float:
+            """解析 '296.00亿' / '144.23万' 格式"""
+            if val is None or val == '-' or val == '':
+                return 0.0
+            try:
+                s = str(val).strip()
+                if '亿' in s:
+                    return float(s.replace('亿', ''))
+                elif '万' in s:
+                    return float(s.replace('万', '')) / 10000
+                else:
+                    return float(s)
+            except (ValueError, TypeError):
+                return 0.0
+
+        try:
+            df = self._ak_retry(ak.stock_fund_flow_industry, symbol='即时')
+            if df is None or df.empty:
+                raise ValueError("返回空数据")
+
+            records = []
+            for _, row in df.iterrows():
+                records.append({
+                    "name":         str(row.get("行业", "")),
+                    "change_pct":   self._safe_float(row.get("行业-涨跌幅", 0)),
+                    "inflow":       _parse_amount(row.get("流入资金", 0)),
+                    "outflow":      _parse_amount(row.get("流出资金", 0)),
+                    "net_flow":     _parse_amount(row.get("净额", 0)),
+                    "company_count": int(row.get("公司家数", 0) or 0),
+                    "leader":       str(row.get("领涨股", "")),
+                    "leader_pct":   self._safe_float(row.get("领涨股-涨跌幅", 0)),
+                })
+
+            # 按净额降序
+            records.sort(key=lambda x: x["net_flow"], reverse=True)
+            return records[:top_n]
+        except Exception as e:
+            print(f"行业资金流向获取失败: {e}")
+            return []
 
     @staticmethod
     def _safe_float(val, default: float = 0.0) -> float:
@@ -488,7 +598,7 @@ class AKShareSource(BaseDataSource):
 
         # ── 主源：AKShare ────────────────────────────────────────
         try:
-            df = ak.stock_board_concept_name_em()
+            df = self._ak_retry(ak.stock_board_concept_name_em)
             if df.empty:
                 raise ValueError("返回空数据")
             df = df.rename(columns={
@@ -536,21 +646,37 @@ class AKShareSource(BaseDataSource):
         """获取板块资金流向排行"""
         import akshare as ak
 
-        # ── 主源：AKShare ────────────────────────────────────────
+        def _parse_amount(val) -> float:
+            if val is None or val == '-' or val == '':
+                return 0.0
+            try:
+                s = str(val).strip()
+                if '亿' in s:
+                    return float(s.replace('亿', ''))
+                elif '万' in s:
+                    return float(s.replace('万', '')) / 10000
+                else:
+                    return float(s)
+            except (ValueError, TypeError):
+                return 0.0
+
+        # ── 主源：AKShare（带重试）─────────────────────────────────
         try:
             if sector_type == "industry":
-                df = ak.stock_board_industry_fund_flow_rank_em()
+                df = self._ak_retry(ak.stock_fund_flow_industry, symbol='今日')
             else:
-                df = ak.stock_board_concept_fund_flow_rank_em()
-            if df.empty:
+                df = self._ak_retry(ak.stock_fund_flow_concept, symbol='今日')
+            if df is None or getattr(df, "empty", False) or df.empty:
                 raise ValueError("返回空数据")
+            col_name = "行业" if sector_type == "industry" else "概念"
+            col_pct = "行业-涨跌幅" if sector_type == "industry" else "概念-涨跌幅"
             records = []
             for _, row in df.iterrows():
                 records.append({
-                    "sector_name": str(row.get("名称", "")),
-                    "pct_chg": float(row.get("今日涨跌幅", 0) or 0),
-                    "net_mf": float(row.get("今日主力净流入-净额", 0) or 0),
-                    "net_mf_pct": float(row.get("今日主力净流入-净占比", 0) or 0),
+                    "sector_name": str(row.get(col_name, "")),
+                    "pct_chg": self._safe_float(row.get(col_pct, 0)),
+                    "net_mf": _parse_amount(row.get("净额", 0)),
+                    "net_mf_pct": 0.0,
                 })
             records.sort(key=lambda x: x["net_mf"], reverse=True)
             return records
@@ -588,23 +714,67 @@ class AKShareSource(BaseDataSource):
     # ─── 北向资金 ───────────────────────────────────────────────────────
 
     def get_north_money_flow(self, days: int = 5) -> List[Dict]:
-        """获取北向资金流向（近 N 日），使用 stock_hsgt_hist_em(symbol="北向资金")
-        实际列名：日期, 当日成交净买额(亿), 沪深300(收盘指数)
+        """获取北向资金流向（近 N 日）
+        
+        优先使用 stock_hsgt_fund_flow_summary_em 获取今日数据
+        注意：stock_hsgt_hist_em 接口自2024年8月起数据为空
+        返回字段：date(日期), north_net(净流入，元), north_index(指数涨跌幅)
         """
         import akshare as ak
         import pandas as pd
-
-        # ── 主源：AKShare ────────────────────────────────────────
+        from datetime import datetime, timedelta
+        
+        # ── 主源：stock_hsgt_fund_flow_summary_em（获取今日数据） ─────
         try:
-            df = ak.stock_hsgt_hist_em(symbol="北向资金")
+            df = self._ak_retry(ak.stock_hsgt_fund_flow_summary_em)
             if df is None or getattr(df, "empty", True) or df.empty:
                 raise ValueError("返回空数据")
+            
+            # 筛选北向资金数据（沪股通 + 深股通）
+            north_df = df[
+                (df["资金方向"] == "北向") & 
+                (df["板块"].isin(["沪股通", "深股通"]))
+            ]
+            
+            if north_df.empty:
+                raise ValueError("没有找到北向资金数据")
+            
+            # 按板块汇总北向资金
+            total_net = 0.0
+            for _, row in north_df.iterrows():
+                net_val = row.get("成交净买额") or 0
+                if pd.notna(net_val):
+                    total_net += float(net_val)
+            
+            # 获取指数涨跌幅
+            index_pct = 0.0
+            for _, row in north_df.iterrows():
+                pct = row.get("指数涨跌幅") or 0
+                if pd.notna(pct):
+                    index_pct = float(pct)
+                    break
+            
+            today = datetime.now().strftime("%Y-%m-%d")
+            return [{
+                "date": today,
+                "north_net": total_net * 1e8,  # 转换为元
+                "north_index": index_pct,
+            }]
+        except Exception as e:
+            print(f"北向资金获取失败: {e}")
+
+        # ── 降级：尝试 stock_hsgt_hist_em ─────────────────────────
+        try:
+            df = self._ak_retry(ak.stock_hsgt_hist_em, symbol="北向资金")
+            if df is None or getattr(df, "empty", True) or df.empty:
+                raise ValueError("返回空数据")
+            
             df["日期"] = pd.to_datetime(df["日期"])
             df = df.sort_values("日期", ascending=False).head(days)
             records = []
             for _, row in df.iterrows():
-                net_val = row.get("当日成交净买额") or 0
-                idx_val = row.get("沪深300") or 0
+                net_val = row.get("当日成交净买额")
+                idx_val = row.get("沪深300")
                 records.append({
                     "date": str(row["日期"].date()),
                     "north_net": float(net_val) * 1e8 if pd.notna(net_val) else 0.0,
@@ -612,11 +782,10 @@ class AKShareSource(BaseDataSource):
                 })
             return records
         except Exception as e:
-            print(f"AKShare 北向资金获取失败: {e}，降级到 westock-data…")
+            print(f"AKShare 北向资金（备用）获取失败: {e}")
 
-        # ── 降级：暂时返回模拟数据 ───────────────────────────────
-        # 注：westock-data 无直接北向资金接口，返回空列表
-        print("警告：无北向资金降级数据源")
+        # ── 降级：返回空列表 ────────────────────────────────────
+        print("警告：北向资金数据源暂不可用")
         return []
 
     # ─── 热搜 ─────────────────────────────────────────────────────────
@@ -641,7 +810,7 @@ class AKShareSource(BaseDataSource):
         # 降级到东方财富人气榜
         try:
             import akshare as ak
-            df = ak.stock_hot_rank_em()
+            df = self._ak_retry(ak.stock_hot_rank_em)
             if df is None or df.empty:
                 return []
             records = []
@@ -662,7 +831,7 @@ class AKShareSource(BaseDataSource):
         import akshare as ak
 
         try:
-            df = ak.stock_hot_rank_em()
+            df = self._ak_retry(ak.stock_hot_rank_em)
             if df is None or df.empty:
                 return []
             records = []
@@ -685,7 +854,7 @@ class AKShareSource(BaseDataSource):
             if date is None:
                 import datetime
                 date = datetime.datetime.now().strftime("%Y%m%d")
-            df = ak.stock_hot_search_baidu(symbol=date)
+            df = self._ak_retry(ak.stock_hot_search_baidu, symbol=date)
             if df is None or df.empty:
                 return []
             records = []

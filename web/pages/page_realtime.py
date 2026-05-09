@@ -61,12 +61,17 @@ if code:
         prev = df.iloc[-2] if len(df) >= 2 else latest
 
         # ── 关键指标卡片（涨跌颜色：涨红跌绿，CSS 美化）─────────────
-        # 获取股票名称（用 efinance，速度快）
-        stock_name = latest.get("name", "")
+        # 获取股票名称：优先从输入框显示文字中提取，其次 efinance
+        stock_name = ""
+        input_display = st.session_state.get("realtime_code_input", "")
+        # 输入框格式是 "代码 名字"，尝试从中提取
+        if input_display and " " in input_display:
+            parts = input_display.split(" ", 1)
+            if len(parts) == 2:
+                stock_name = parts[1].strip()
         if not stock_name:
             try:
                 import efinance as ef
-                # 去掉 sh/sz 前缀
                 code_num = code.replace("sh", "").replace("sz", "").replace("bj", "")
                 info = ef.stock.get_base_info(code_num)
                 if info is not None and "股票名称" in info:

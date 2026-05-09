@@ -73,23 +73,12 @@ async def money_stock_rank(
     return {"total": len(data), "data": data[:top_n]}
 
 
-@router.get("/money/north-flow")
-async def money_north_flow(days: int = Query(5, ge=1, le=30)):
-    """北向资金近 N 日流向"""
+@router.get("/money/industry-flow")
+async def money_industry_flow(top_n: int = Query(20, ge=1, le=60)):
+    """行业资金流向排行"""
     from app.tracker.money_monitor import MoneyMonitor
     m = MoneyMonitor()
-    return {"days": days, "data": m.north_flow(days)}
-
-
-@router.get("/money/north-hold")
-async def money_north_hold(
-    market: str = Query("沪股通", description="沪股通 / 深股通"),
-    top_n: int = Query(20, ge=1, le=100),
-):
-    """北向资金重仓排行"""
-    from app.tracker.money_monitor import MoneyMonitor
-    m = MoneyMonitor()
-    return {"market": market, "data": m.north_hold_top(market, top_n)}
+    return {"total": top_n, "data": m.industry_flow(top_n)}
 
 
 @router.get("/money/report")
