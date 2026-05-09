@@ -48,20 +48,35 @@ class AKShareSource(BaseDataSource):
                 end_date=end.replace("-", ""),
                 adjust="qfq",  # 前复权
             )
+            ak_records = None
             if not df.empty:
-                return self._parse_ak_daily(df)
+                ak_records = self._parse_ak_daily(df)
         except Exception as e:
             print(f"[AKShare] 历史日线获取失败({code}): {e}，尝试 westock-data 降级…")
+
+        # 校验主源数据的日期范围是否覆盖请求范围
+        if ak_records:
+            dates = [r["date"] for r in ak_records]
+            data_start = min(dates).replace("-", "")
+            data_end   = max(dates).replace("-", "")
+            s_ymd = start.replace("-", "")
+            e_ymd = end.replace("-", "")
+            if data_start > s_ymd or data_end < e_ymd:
+                print(f"[AKShare] 数据范围不足({code}): 请求 {s_ymd}~{e_ymd}，"
+                      f"实际 {data_start}~{data_end}，尝试 westock-data 降级…")
+                ak_records = None
+        if ak_records:
+            return ak_records
 
         # ── 降级：westock-data K线 ────────────────────────────────
         try:
             from app.data.westock_data import WestockData
-            # 计算需要的条数（自然日→交易日 约 0.67 倍，最少 30 条）
+            # count 使用自然日天数（确保覆盖完整范围，按日期过滤后截断）
             from datetime import datetime
             s = datetime.strptime(start.replace("-", ""), "%Y%m%d")
             e = datetime.strptime(end.replace("-", ""), "%Y%m%d")
             days = (e - s).days
-            count = max(days * 2 // 3, 30)
+            count = max(days, 250)  # 自然日天数，确保 westock-data 返回足够覆盖日期范围的数据
             records = WestockData().kline(code, period="day", count=count)
             # westock-data 返回 YYYY-MM-DD，转换为 YYYYMMDD 后按日期过滤
             def _to_ymd(d: str) -> str:
