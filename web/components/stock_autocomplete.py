@@ -60,10 +60,9 @@ def stock_autocomplete(
     # 初始化 session_state
     if key not in st.session_state:
         st.session_state[key] = initial
-    if f"{key}_input" not in st.session_state:
         st.session_state[f"{key}_input"] = initial
 
-    # 文本输入框
+    # 文本输入框：显示「代码 名字」格式（有点击选择时更新）
     raw = st.text_input(
         label,
         value=st.session_state.get(f"{key}_input", ""),
@@ -74,11 +73,11 @@ def stock_autocomplete(
     )
     st.session_state[f"{key}_input"] = raw
 
-    # 实时搜索（无 rerun，纯展示）
+    # 实时搜索
     results = _search_stocks(raw)
 
     if results:
-        # 显示联想结果列表，每行一个按钮，点击后直接更新 session_state 并显示已选中状态
+        # 用户已输入但未选择 → 显示联想结果
         st.caption(f"🔍 找到 {len(results)} 条结果，点击选择：")
         cols = st.columns(min(len(results), 3))
         for i, stock in enumerate(results[:min(len(results), 12)]):
@@ -86,14 +85,11 @@ def stock_autocomplete(
             label_text = f"{stock['code']} {stock['name']}（{stock['market']}）"
             if col.button(label_text, key=f"{key}_btn_{stock['code']}"):
                 chosen_code = stock["code"]
+                chosen_name = stock["name"]
                 st.session_state[key] = chosen_code
-                st.session_state[f"{key}_input"] = chosen_code
+                # 输入框直接显示「代码 名字」
+                st.session_state[f"{key}_input"] = f"{chosen_code} {chosen_name}"
                 st.rerun()
-
-        # 选中的那只，醒目提示
-        current = st.session_state.get(key, initial)
-        if current != initial:
-            st.success(f"✅ 已选择：{current}")
 
     elif raw and len(raw) >= 2:
         st.warning(f"⚠️ 未找到「{raw}」")

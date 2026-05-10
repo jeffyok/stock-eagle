@@ -36,7 +36,7 @@ if code:
         start = end - timedelta(days=180)
 
         with st.spinner("获取行情数据…"):
-            records = src.get_stock_daily(code, start.strftime("%Y%m%d"), end.strftime("%Y%m%d"))
+            records = src.get_stock_daily(code, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
 
         if not records:
             st.warning("未获取到数据，请检查股票代码是否正确。")
@@ -61,16 +61,39 @@ if code:
         prev = df.iloc[-2] if len(df) >= 2 else latest
 
         # ── 关键指标卡片（涨跌颜色：涨红跌绿，CSS 美化）─────────────
-        # 获取股票名称（用 efinance，速度快）
-        stock_name = latest.get("name", "")
+        # 获取股票名称：优先从输入框提取，其次 efinance → akshare → stock_list
+        stock_name = ""
+        input_display = st.session_state.get("realtime_code_input", "")
+        if input_display and " " in input_display:
+            parts = input_display.split(" ", 1)
+            if len(parts) == 2:
+                stock_name = parts[1].strip()
         if not stock_name:
             try:
                 import efinance as ef
-                # 去掉 sh/sz 前缀
                 code_num = code.replace("sh", "").replace("sz", "").replace("bj", "")
                 info = ef.stock.get_base_info(code_num)
                 if info is not None and "股票名称" in info:
                     stock_name = info["股票名称"]
+            except Exception:
+                pass
+        if not stock_name:
+            try:
+                import akshare as ak
+                stock_code = code.replace("sh", "").replace("sz", "").replace("bj", "")
+                df_info = ak.stock_individual_info_em(symbol=stock_code)
+                row = df_info[df_info["item"] == "股票名称"]
+                if not row.empty:
+                    stock_name = row.iloc[0]["value"]
+            except Exception:
+                pass
+        if not stock_name:
+            try:
+                from app.data.stock_search import get_stock_list
+                for s in get_stock_list():
+                    if s["code"] == code:
+                        stock_name = s["name"]
+                        break
             except Exception:
                 pass
         st.subheader(f"{stock_name}（{code}）")
@@ -78,9 +101,22 @@ if code:
         price = float(latest.get("收盘", latest.get("close", 0)))
         pre_close = float(prev.get("收盘", prev.get("close", price)))
         chg = (price - pre_close) / pre_close * 100 if pre_close else 0
-        vol = float(latest.get("成交量", latest.get("volume", 0))) / 1e4
+        vol = float(latest.get("成交量", latest.get("volume", 0))) / 1e6  # 股 → 万手（1万手=100万股）
         amt = float(latest.get("成交额", latest.get("amount", 0))) / 1e8
         turn = float(latest.get("换手率", latest.get("turnover", 0)))
+        # Baostock 不含换手率，尝试用 AKShare 补充
+        if turn == 0.0:
+            try:
+                import akshare as ak
+                stock_code = code.replace("sh", "").replace("sz", "").replace("bj", "")
+                df_info = ak.stock_individual_info_em(symbol=stock_code)
+                row = df_info[df_info["item"] == "流通股"]
+                if not row.empty:
+                    float_shares = float(row.iloc[0]["value"]) * 1e8  # 流通股（股）
+                    vol_raw = float(latest.get("成交量", latest.get("volume", 0)))
+                    turn = vol_raw / float_shares * 100  # 换手率 = 成交量 / 流通股 * 100%
+            except Exception:
+                pass
         ma5 = df["收盘"].astype(float).tail(5).mean()
         ma20 = df["收盘"].astype(float).tail(20).mean()
 
@@ -115,7 +151,7 @@ if code:
 
         # 第二行：成交/换手/昨收/MA
         r2 = st.columns(5)
-        r2[0].markdown(card("成交额", f"{amt:.2f}亿元"), unsafe_allow_html=True)
+        r2[0].markdown(card("成交额", f"{amt:.2f}亿"), unsafe_allow_html=True)
         r2[1].markdown(card("换手率", f"{turn:.2f}%"), unsafe_allow_html=True)
         r2[2].markdown(card("昨收", f"{pre_close:.2f}"), unsafe_allow_html=True)
         r2[3].markdown(card("MA5", f"{ma5:.2f}"), unsafe_allow_html=True)
@@ -222,10 +258,15 @@ if code:
         else:
             st.caption("暂无资金流向数据（需在交易时间内获取）")
 
-        # ── 近期数据表 ────────────────────────────────────────────
+        # ── 近期数据表（带单位换算）─────────────────────────────
         with st.expander("近期日线数据（最近20条）"):
-            show_cols = [c for c in df.columns if c in ["日期","开盘","最高","最低","收盘","成交量","成交额","换手率"]]
-            st.dataframe(df[show_cols].tail(20), width='stretch')
+            show_df = df.copy()
+            if "成交量" in show_df.columns:
+                show_df["成交量(万手)"] = (show_df["成交量"].astype(float) / 1e6).round(2)
+            if "成交额" in show_df.columns:
+                show_df["成交额(亿)"] = (show_df["成交额"].astype(float) / 1e8).round(2)
+            show_cols = [c for c in show_df.columns if c in ["日期","开盘","最高","最低","收盘","成交量(万手)","成交额(亿)","换手率"]]
+            st.dataframe(show_df[show_cols].tail(20), width='stretch')
 
     except Exception as e:
         st.exception(e)

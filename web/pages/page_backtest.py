@@ -85,19 +85,68 @@ if run:
         import plotly.graph_objects as go
 
         equity_list = r.get("equity_curve", [])
+        trades_list = r.get("trades", [])
         if equity_list:
             eq_df = pd.DataFrame(equity_list)
             eq_df["日期"] = pd.to_datetime(eq_df["date"])
             eq_df = eq_df.sort_values("日期")
+
+            # 构建 equity → date 映射用于快速查找
+            date_to_equity = dict(zip(eq_df["日期"], eq_df["equity"]))
+
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=eq_df["日期"], y=eq_df["equity"],
                 mode="lines", name="账户权益",
                 line=dict(color="#1f77b4", width=2),
             ))
-            fig.add_hline(y=initial_cash, line_dash="dash", line_color="gray", annotation_text="初始资金")
-            fig.update_layout(height=400, xaxis_title="日期", yaxis_title="账户价值（元）", hovermode="x unified")
-            st.plotly_chart(fig, width='stretch')
+            fig.add_hline(y=initial_cash, line_dash="dash", line_color="gray",
+                          annotation_text="初始资金", annotation_position="bottom right")
+
+            # 分离买卖点
+            buy_dates, buy_prices = [], []
+            sell_dates, sell_prices = [], []
+            for t in trades_list:
+                td = pd.to_datetime(t["date"])
+                if td in date_to_equity:
+                    if t["action"] == "buy":
+                        buy_dates.append(td)
+                        buy_prices.append(date_to_equity[td])
+                    elif t["action"] == "sell":
+                        sell_dates.append(td)
+                        sell_prices.append(date_to_equity[td])
+
+            # 买入标记：红色向上三角 + 垂直线（A股 convention：红涨=买）
+            if buy_dates:
+                fig.add_trace(go.Scatter(
+                    x=buy_dates, y=buy_prices,
+                    mode="markers", name="买入 ▲",
+                    marker=dict(symbol="triangle-up", color="#ff1744", size=12),
+                    hovertemplate="买入 %{x|%Y-%m-%d}<br>权益: %{y:.2f}<extra></extra>",
+                ))
+                for x, y in zip(buy_dates, buy_prices):
+                    fig.add_vline(x=x, line_color="#ff1744", line_width=1,
+                                  line_dash="dot", opacity=0.6)
+
+            # 卖出标记：绿色向下三角 + 垂直线（A股 convention：绿跌=卖）
+            if sell_dates:
+                fig.add_trace(go.Scatter(
+                    x=sell_dates, y=sell_prices,
+                    mode="markers", name="卖出 ▼",
+                    marker=dict(symbol="triangle-down", color="#00c853", size=12),
+                    hovertemplate="卖出 %{x|%Y-%m-%d}<br>权益: %{y:.2f}<extra></extra>",
+                ))
+                for x, y in zip(sell_dates, sell_prices):
+                    fig.add_vline(x=x, line_color="#00c853", line_width=1,
+                                  line_dash="dot", opacity=0.6)
+
+            fig.update_layout(
+                height=450, hovermode="x unified",
+                xaxis_title="日期", yaxis_title="账户价值（元）",
+                legend=dict(orientation="h", yanchor="bottom",
+                            y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.caption("无权益曲线数据（请确认回测期内有数据）")
     except ImportError:
@@ -113,7 +162,23 @@ if run:
                 trades_show[col] = trades_show[col].round(2)
         if "return_pct" in trades_show.columns:
             trades_show["return_pct"] = trades_show["return_pct"].round(2)
-        st.dataframe(trades_show, width='stretch')
+
+        # action 列颜色：买入→红，卖出→绿（A股 convention）
+        def color_action(val: str) -> str:
+            if val == "buy":
+                return "color:#ff1744;font-weight:bold"
+            elif val == "sell":
+                return "color:#00c853;font-weight:bold"
+            return ""
+
+        # 中文列名映射
+        col_rename = {"date": "日期", "action": "操作", "price": "价格",
+                      "qty": "数量", "reason": "原因", "return_pct": "收益率(%)",
+                      "score": "评分"}
+        trades_show = trades_show.rename(columns={k: v for k, v in col_rename.items() if k in trades_show.columns})
+
+        styled = trades_show.style.map(color_action, subset=["操作"])
+        st.dataframe(styled, width='stretch', hide_index=True)
     else:
         st.info("该周期内无交易信号")
 else:

@@ -99,39 +99,61 @@ with tab2:
                     st.exception(e)
 
         if "money_rank" in st.session_state and st.session_state["money_rank"]:
-            df_money = pd.DataFrame(st.session_state["money_rank"][:30]).copy()
-            # 单位转换：元 → 亿
-            for col in ["net_mf", "net_mf_big", "net_mf_small"]:
-                if col in df_money.columns:
-                    df_money[col] = df_money[col] / 1e8
-            df_money = df_money.rename(columns={
-                "code": "代码", "name": "名称", "close": "最新价",
-                "pct_chg": "涨跌幅(%)", "net_mf": "主力净流入(亿)",
-                "net_mf_pct": "净占比(%)", "net_mf_big": "超大单(亿)", "net_mf_small": "小单(亿)"
-            })
-            st.dataframe(df_money, width='stretch', hide_index=True)
+            rank_data = st.session_state["money_rank"]
+            # 检测是否因AKShare故障导致主力净流入不可用
+            if rank_data and rank_data[0].get("net_mf") is None:
+                st.warning("⚠️ 主力净流入数据暂时不可用（东方财富接口故障），请稍后刷新")
+                # 仍显示涨跌幅/价格作为参考
+                df_money = pd.DataFrame(rank_data[:30]).copy()
+                df_money = df_money.rename(columns={
+                    "code": "代码", "name": "名称", "close": "最新价",
+                    "pct_chg": "涨跌幅(%)",
+                })
+                st.dataframe(df_money[["代码", "名称", "最新价", "涨跌幅(%)"]], width='stretch', hide_index=True)
+            else:
+                df_money = pd.DataFrame(rank_data[:30]).copy()
+                for col in ["net_mf", "net_mf_big", "net_mf_small"]:
+                    if col in df_money.columns:
+                        df_money[col] = df_money[col] / 1e8
+                df_money = df_money.rename(columns={
+                    "code": "代码", "name": "名称", "close": "最新价",
+                    "pct_chg": "涨跌幅(%)", "net_mf": "主力净流入(亿)",
+                    "net_mf_pct": "净占比(%)", "net_mf_big": "超大单(亿)", "net_mf_small": "小单(亿)"
+                })
+                st.dataframe(df_money, width='stretch', hide_index=True)
         else:
             st.caption("暂无数据，请点击刷新")
 
     with col2:
-        st.markdown("**北向资金（沪深港通）**")
-        days_north = st.number_input("查询近 N 日", value=5, min_value=1, max_value=30, key="north_days")
+        st.markdown("**行业资金流向**")
+        top_n = st.slider("显示条数", value=15, min_value=5, max_value=50, key="industry_top")
 
-        if st.button("刷新北向资金", key="btn_north", type="primary"):
-            with st.spinner("获取北向资金…"):
+        if st.button("刷新行业资金", key="btn_industry", type="primary"):
+            with st.spinner("获取行业资金流向…"):
                 try:
                     from app.tracker.money_monitor import MoneyMonitor
                     m = MoneyMonitor()
-                    north_data = m.north_flow(days_north)
-                    st.session_state["north_flow"] = north_data
+                    industry_data = m.industry_flow(top_n)
+                    st.session_state["industry_flow"] = industry_data
                 except Exception as e:
                     st.exception(e)
 
-        if "north_flow" in st.session_state and st.session_state["north_flow"]:
-            df_north = pd.DataFrame(st.session_state["north_flow"]).rename(columns={
-                "date": "日期", "north_net": "北向净流入(元)", "north_index": "收盘指数"
+        if "industry_flow" in st.session_state and st.session_state["industry_flow"]:
+            df_ind = pd.DataFrame(st.session_state["industry_flow"])
+            df_ind["净额(亿)"] = df_ind["net_flow"].round(2)
+            df_ind["流入(亿)"] = df_ind["inflow"].round(2)
+            df_ind["流出(亿)"] = df_ind["outflow"].round(2)
+            df_ind = df_ind.rename(columns={
+                "name": "行业",
+                "change_pct": "涨跌幅(%)",
+                "leader": "领涨股",
+                "leader_pct": "领涨涨幅(%)",
             })
-            st.dataframe(df_north, width='stretch', hide_index=True)
+            st.dataframe(
+                df_ind[["行业", "涨跌幅(%)", "净额(亿)", "领涨股", "领涨涨幅(%)"]],
+                width="stretch",
+                hide_index=True
+            )
 
 # ── Tab3：热搜监控 ─────────────────────────────────────────
 with tab3:
@@ -223,7 +245,7 @@ with tab4:
 
                 # 资金流向摘要
                 st.markdown("**主力资金异动**")
-                money_stocks = money_rpt.get("top_inflow", [])
+                money_stocks = money_rpt.get("main_inflow", [])
                 if money_stocks:
                     df_money = pd.DataFrame(money_stocks[:10]).copy()
                     # 单位转换：元 → 亿

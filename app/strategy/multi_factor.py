@@ -41,58 +41,66 @@ class MultiFactorStrategy(BaseStrategy):
         **kwargs,
     ) -> List[Dict[str, Any]]:
         """
-        生成买卖信号
-        综合评分 >= 45 → 买入信号
-        综合评分 <= 40 → 卖出信号（持仓时）
+        生成买卖信号（与 backtest 逻辑完全一致）
+        综合评分 >= 45 → 买入（空仓时）
+        综合评分 <= 40 → 卖出（持仓时）
         """
         df = self._get_daily(code, start_date, end_date)
         if df.empty or len(df) < 20:
             return []
 
         financial = self._get_financial(code)
-        price = float(df.iloc[-1]["close"])
-
-        # 计算各因子得分（0~100）
-        value_score = self._calc_value_score(financial, price)
-        growth_score = self._calc_growth_score(financial)
-        quality_score = self._calc_quality_score(financial)
-        momentum_score = self._calc_momentum_score(df)
-        volatility_score = self._calc_volatility_score(df)
-
-        total = (
-            value_score * self.WEIGHTS["value"]
-            + growth_score * self.WEIGHTS["growth"]
-            + quality_score * self.WEIGHTS["quality"]
-            + momentum_score * self.WEIGHTS["momentum"]
-            + volatility_score * self.WEIGHTS["volatility"]
-        )
-
         signals = []
-        last_row = df.iloc[-1]
-        signal_date = pd.to_datetime(last_row["date"]).date() if hasattr(last_row["date"], "strftime") else end_date
+        position = False  # 持仓状态，避免重复信号
 
-        if total >= 45:
-            signals.append({
-                "date": signal_date,
-                "direction": "buy",
-                "price": price,
-                "score": round(float(total), 2),
-                "reason": self._build_reason(
-                    value_score, growth_score, quality_score,
-                    momentum_score, volatility_score,
-                ),
-            })
-        elif total <= 40:
-            signals.append({
-                "date": signal_date,
-                "direction": "sell",
-                "price": price,
-                "score": round(float(total), 2),
-                "reason": self._build_reason(
-                    value_score, growth_score, quality_score,
-                    momentum_score, volatility_score,
-                ),
-            })
+        for i in range(20, len(df)):
+            window = df.iloc[: i + 1]
+            row = window.iloc[-1]
+            price = float(row["close"])
+            d = pd.to_datetime(row["date"]).date()
+
+            # 计算各因子得分（0~100）
+            value_score = self._calc_value_score(financial, price)
+            growth_score = self._calc_growth_score(financial)
+            quality_score = self._calc_quality_score(financial)
+            momentum_score = self._calc_momentum_score(window)
+            volatility_score = self._calc_volatility_score(window)
+
+            total = (
+                value_score * self.WEIGHTS["value"]
+                + growth_score * self.WEIGHTS["growth"]
+                + quality_score * self.WEIGHTS["quality"]
+                + momentum_score * self.WEIGHTS["momentum"]
+                + volatility_score * self.WEIGHTS["volatility"]
+            )
+
+            # 买入：与 backtest 完全一致（total >= 45 且空仓）
+            if total >= 45 and not position:
+                signals.append({
+                    "date": d,
+                    "direction": "buy",
+                    "price": price,
+                    "score": round(float(total), 2),
+                    "reason": self._build_reason(
+                        value_score, growth_score, quality_score,
+                        momentum_score, volatility_score,
+                    ),
+                })
+                position = True
+
+            # 卖出：与 backtest 完全一致（total <= 40 且持仓）
+            elif total <= 40 and position:
+                signals.append({
+                    "date": d,
+                    "direction": "sell",
+                    "price": price,
+                    "score": round(float(total), 2),
+                    "reason": self._build_reason(
+                        value_score, growth_score, quality_score,
+                        momentum_score, volatility_score,
+                    ),
+                })
+                position = False
 
         return signals
 
