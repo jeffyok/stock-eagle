@@ -79,46 +79,51 @@ class MACDStrategy(BaseStrategy):
         end_date: date,
         **kwargs,
     ) -> List[Dict[str, Any]]:
+        # 与 backtest 使用完全一致的指标计算
         df = _get_daily(self.source, code, start_date, end_date)
         if df.empty or len(df) < 30:
             return []
+        df = _calc_indicators(df)
 
-        df = df.copy()
-        ema_fast = df["close"].ewm(span=self.fast, adjust=False).mean()
-        ema_slow = df["close"].ewm(span=self.slow, adjust=False).mean()
-        dif = ema_fast - ema_slow
-        dea = dif.ewm(span=self.signal, adjust=False).mean()
-        df["dif"] = dif
-        df["dea"] = dea
-        df["hist"] = (dif - dea) * 2
+        # 复用 backtest 的买卖判断函数
+        def check_buy(df_sig: pd.DataFrame, idx: int) -> bool:
+            dif0 = float(df_sig["macd_dif"].iloc[idx])
+            dea0 = float(df_sig["macd_dea"].iloc[idx])
+            dif1 = float(df_sig["macd_dif"].iloc[idx - 1])
+            dea1 = float(df_sig["macd_dea"].iloc[idx - 1])
+            return (dif1 <= dea1 and dif0 > dea0) or (dif1 <= 0 and dif0 > 0)
+
+        def check_sell(df_sig: pd.DataFrame, idx: int) -> bool:
+            dif0 = float(df_sig["macd_dif"].iloc[idx])
+            dea0 = float(df_sig["macd_dea"].iloc[idx])
+            dif1 = float(df_sig["macd_dif"].iloc[idx - 1])
+            dea1 = float(df_sig["macd_dea"].iloc[idx - 1])
+            return (dif1 >= dea1 and dif0 < dea0) or (dif1 >= 0 and dif0 < 0)
 
         signals = []
-        for i in range(1, len(df)):
-            prev_dif, prev_dea = float(df["dif"].iloc[i - 1]), float(df["dea"].iloc[i - 1])
-            curr_dif, curr_dea = float(df["dif"].iloc[i]), float(df["dea"].iloc[i])
+        for i in range(30, len(df)):
             d = df["date"].iloc[i].date()
             price = float(df["close"].iloc[i])
+            dif0 = float(df["macd_dif"].iloc[i])
+            dea0 = float(df["macd_dea"].iloc[i])
 
-            # 金叉：DIF 从负转正，或 DIF 上穿 DEA
-            if prev_dif <= prev_dea and curr_dif > curr_dea:
-                # 计算柱状图增幅作为信号强度
-                score = min(100, 50 + float(df["hist"].iloc[i]) * 10)
+            if check_buy(df, i):
+                score = min(100, 50 + float(df["macd_hist"].iloc[i]) * 10)
                 signals.append({
                     "date": d,
                     "direction": "buy",
                     "price": price,
                     "score": round(float(score), 2),
-                    "reason": f"MACD金叉 DIF={curr_dif:.3f} DEA={curr_dea:.3f}",
+                    "reason": f"MACD金叉 DIF={dif0:.3f} DEA={dea0:.3f}",
                 })
-            # 死叉：DIF 从上往下穿越 DEA
-            elif prev_dif >= prev_dea and curr_dif < curr_dea:
-                score = min(100, 50 - float(df["hist"].iloc[i]) * 10)
+            elif check_sell(df, i):
+                score = min(100, 50 - float(df["macd_hist"].iloc[i]) * 10)
                 signals.append({
                     "date": d,
                     "direction": "sell",
                     "price": price,
                     "score": round(float(score), 2),
-                    "reason": f"MACD死叉 DIF={curr_dif:.3f} DEA={curr_dea:.3f}",
+                    "reason": f"MACD死叉 DIF={dif0:.3f} DEA={dea0:.3f}",
                 })
 
         return signals
@@ -136,14 +141,16 @@ class MACDStrategy(BaseStrategy):
             dea0 = float(df["macd_dea"].iloc[i])
             dif1 = float(df["macd_dif"].iloc[i - 1])
             dea1 = float(df["macd_dea"].iloc[i - 1])
-            return dif1 <= dea1 and dif0 > dea0  # 金叉
+            # 金叉 或 DIF 从负转正（进入多头区）
+            return (dif1 <= dea1 and dif0 > dea0) or (dif1 <= 0 and dif0 > 0)
 
         def check_sell(df: pd.DataFrame, i: int) -> bool:
             dif0 = float(df["macd_dif"].iloc[i])
             dea0 = float(df["macd_dea"].iloc[i])
             dif1 = float(df["macd_dif"].iloc[i - 1])
             dea1 = float(df["macd_dea"].iloc[i - 1])
-            return dif1 >= dea1 and dif0 < dea0  # 死叉
+            # 死叉 或 DIF 从正转负（进入空头区）
+            return (dif1 >= dea1 and dif0 < dea0) or (dif1 >= 0 and dif0 < 0)
 
         df_raw = _get_daily(self.source, code, start_date, end_date)
         df_indicators = _calc_indicators(df_raw)
@@ -152,6 +159,7 @@ class MACDStrategy(BaseStrategy):
 
         cash = initial_cash
         position = 0
+        cost_price = 0.0  # 持仓成本价（用于止损）
         trades = []
         equity_curve = []
         held = False
@@ -161,17 +169,24 @@ class MACDStrategy(BaseStrategy):
             price = float(row["close"])
             d = row["date"].date()
 
+            # 止损：持仓后跌幅超过 8% 强制卖出
+            stop_loss = held and cost_price > 0 and price < cost_price * 0.92
+
             if not held and check_buy(df_indicators, i) and cash >= price * 100:
                 qty = int(cash // (price * 100)) * 100
                 cash -= qty * price
                 position += qty
+                cost_price = price
                 held = True
                 trades.append({"date": str(d), "action": "buy", "price": price, "qty": qty})
-            elif held and check_sell(df_indicators, i):
+            elif held and (check_sell(df_indicators, i) or stop_loss):
+                reason = "止损" if stop_loss else "死叉"
                 cash += position * price
-                trades.append({"date": str(d), "action": "sell", "price": price, "qty": position})
+                trades.append({"date": str(d), "action": "sell", "price": price,
+                               "qty": position, "reason": reason})
                 position = 0
                 held = False
+                cost_price = 0.0
 
             equity_curve.append({"date": str(d), "equity": round(cash + position * price, 2)})
 
@@ -281,6 +296,7 @@ class BollingerBandStrategy(BaseStrategy):
 
         df = _calc_indicators(df)
         signals = []
+        bought = False  # 与 backtest 一致：记录持仓状态，避免重复信号
 
         for i in range(self.period, len(df)):
             row = df.iloc[i]
@@ -291,28 +307,40 @@ class BollingerBandStrategy(BaseStrategy):
             prev_price = float(df["close"].iloc[i - 1])
             d = row["date"].date()
 
-            # 买入：当日突破上轨（前一日在上轨以下）
-            if prev_price <= upper and price > upper:
-                spread = (price - upper) / upper * 100
+            # 与 backtest 完全一致：先计算买卖条件，再执行
+            buy_cond = (not bought and
+                        ((prev_price <= upper and price > upper) or
+                         (prev_price <= lower and price > lower)))
+            sell_cond = (bought and
+                         ((prev_price >= lower and price < lower) or
+                          (prev_price >= mid and price < mid)))
+
+            if buy_cond:
+                reason = "下轨反弹" if (prev_price <= lower and price > lower) else "布林上轨突破"
+                ref = lower if (prev_price <= lower and price > lower) else upper
+                spread = abs(price - ref) / ref * 100
                 score = min(100, 50 + spread * 5)
                 signals.append({
                     "date": d,
                     "direction": "buy",
                     "price": price,
                     "score": round(float(score), 2),
-                    "reason": f"突破布林上轨 {upper:.2f}，偏离{spread:.2f}%",
+                    "reason": f"{reason} {ref:.2f}，偏离{spread:.2f}%",
                 })
-            # 卖出：当日跌破下轨
-            elif prev_price >= lower and price < lower:
-                spread = (lower - price) / lower * 100
+                bought = True
+            elif sell_cond:
+                reason = "布林中轨跌破" if (prev_price >= mid and price < mid) else "布林下轨跌破"
+                ref_price = mid if (prev_price >= mid and price < mid) else lower
+                spread = (ref_price - price) / ref_price * 100
                 score = min(100, 50 + spread * 5)
                 signals.append({
                     "date": d,
                     "direction": "sell",
                     "price": price,
                     "score": round(float(score), 2),
-                    "reason": f"跌破布林下轨 {lower:.2f}，偏离{spread:.2f}%",
+                    "reason": f"{reason} {ref_price:.2f}，偏离{spread:.2f}%",
                 })
+                bought = False
 
         return signals
 
@@ -331,6 +359,7 @@ class BollingerBandStrategy(BaseStrategy):
         df = _calc_indicators(df)
         cash = initial_cash
         position = 0
+        cost_price = 0.0
         trades = []
         equity_curve = []
         bought = False
@@ -340,36 +369,46 @@ class BollingerBandStrategy(BaseStrategy):
             price = float(row["close"])
             upper = float(row["bb_upper"])
             lower = float(row["bb_lower"])
+            mid = float(row["bb_mid"])
             prev_price = float(df["close"].iloc[i - 1])
+            prev_low = float(df["close"].iloc[i - 1])
             d = row["date"].date()
 
-            # 买入信号
-            if not bought and prev_price <= upper and price > upper:
-                if cash >= price * 100:
-                    qty = int(cash // (price * 100)) * 100
-                    cash -= qty * price
-                    position += qty
-                    bought = True
-                    trades.append({
-                        "date": str(d),
-                        "action": "buy",
-                        "price": price,
-                        "qty": qty,
-                        "reason": "布林上轨突破",
-                    })
+            # 止损
+            stop_loss = bought and cost_price > 0 and price < cost_price * 0.92
 
-            # 卖出信号
-            elif bought and prev_price >= lower and price < lower:
+            # 买入信号：突破上轨 或 下轨反弹（均值回归）
+            buy_sig = (not bought and not stop_loss and cash >= price * 100 and
+                       ((prev_price <= upper and price > upper) or    # 突破上轨
+                        (prev_price <= lower and price > lower)))      # 下轨反弹
+
+            # 卖出信号：跌破下轨 或 跌破中轨 或 止损
+            sell_sig = (bought and (stop_loss or
+                                   (prev_price >= lower and price < lower) or   # 跌破下轨
+                                   (prev_price >= mid and price < mid)))         # 跌破中轨
+
+            if buy_sig:
+                qty = int(cash // (price * 100)) * 100
+                cash -= qty * price
+                position += qty
+                cost_price = price
+                bought = True
+                reason = "下轨反弹" if prev_price <= lower else "布林上轨突破"
+                trades.append({
+                    "date": str(d), "action": "buy", "price": price,
+                    "qty": qty, "reason": reason,
+                })
+
+            elif sell_sig:
+                reason = "止损" if stop_loss else ("布林下轨跌破" if prev_price >= lower and price < lower else "布林中轨跌破")
                 cash += position * price
                 trades.append({
-                    "date": str(d),
-                    "action": "sell",
-                    "price": price,
-                    "qty": position,
-                    "reason": "布林下轨跌破",
+                    "date": str(d), "action": "sell", "price": price,
+                    "qty": position, "reason": reason,
                 })
                 position = 0
                 bought = False
+                cost_price = 0.0
 
             equity_curve.append({"date": str(d), "equity": round(cash + position * price, 2)})
 
@@ -480,7 +519,8 @@ class MAStrategy(BaseStrategy):
 
         df = _calc_indicators(df)
         signals = []
-        was_bull = None  # None / True(多头) / False(空头)
+        was_bull = None   # None / True(多头) / False(空头)
+        bought = False    # 与 backtest 一致：记录持仓状态
 
         for i in range(self.long, len(df)):
             row = df.iloc[i]
@@ -490,60 +530,52 @@ class MAStrategy(BaseStrategy):
             ma20 = float(row[f"ma{self.long}"])
             prev_row = df.iloc[i - 1]
             prev_ma5 = float(prev_row[f"ma{self.short}"])
-            prev_ma10 = float(prev_row[f"ma{self.mid}"])
             prev_ma20 = float(prev_row[f"ma{self.long}"])
             d = row["date"].date()
 
-            # 当前排列
             is_bull = ma5 > ma10 > ma20
             is_bear = ma5 < ma10 < ma20
+            golden_cross = prev_ma5 <= prev_ma20 and ma5 > ma20
+            death_cross  = prev_ma5 >= prev_ma20 and ma5 < ma20
 
-            # 由空转多（买入）
-            if not was_bull and is_bull:
-                score = 60 + (ma5 - ma10) / ma10 * 100
+            # 与 backtest 完全一致：先计算买卖条件，再执行
+            buy_cond = (not bought and (is_bull or golden_cross))
+            sell_cond = (bought and (is_bear or death_cross))
+
+            if buy_cond:
+                if golden_cross and not is_bull:
+                    reason = f"MA{self.short}上穿MA{self.long}金叉"
+                    score  = 55.0
+                else:
+                    reason = f"均线多头排列 MA{self.short}>{self.mid}>{self.long}"
+                    score  = min(100, max(0, 60 + (ma5 - ma10) / ma10 * 100))
                 signals.append({
                     "date": d,
                     "direction": "buy",
                     "price": price,
-                    "score": round(float(min(100, max(0, score))), 2),
-                    "reason": f"均线多头排列 MA{self.short}>{self.mid}>{self.long}",
+                    "score": round(float(score), 2),
+                    "reason": reason,
                 })
+                bought = True
                 was_bull = True
-
-            # 由多转空（卖出）
-            elif was_bull and is_bear:
-                score = 60 + (ma10 - ma5) / ma5 * 100
+            elif sell_cond:
+                if death_cross and not is_bear:
+                    reason = f"MA{self.short}下穿MA{self.long}死叉"
+                    score  = 55.0
+                else:
+                    reason = f"均线空头排列 MA{self.short}<{self.mid}<{self.long}"
+                    score  = min(100, max(0, 60 + (ma10 - ma5) / ma5 * 100))
                 signals.append({
                     "date": d,
                     "direction": "sell",
                     "price": price,
-                    "score": round(float(min(100, max(0, score))), 2),
-                    "reason": f"均线空头排列 MA{self.short}<{self.mid}<{self.long}",
+                    "score": round(float(score), 2),
+                    "reason": reason,
                 })
+                bought = False
                 was_bull = False
 
-            # 金叉/死叉辅助
-            elif was_bull is not None:
-                # MA5 上穿 MA20
-                if prev_ma5 <= prev_ma20 and ma5 > ma20 and not is_bull:
-                    signals.append({
-                        "date": d,
-                        "direction": "buy",
-                        "price": price,
-                        "score": 55.0,
-                        "reason": f"MA{self.short}上穿MA{self.long}金叉",
-                    })
-                # MA5 下穿 MA20
-                elif prev_ma5 >= prev_ma20 and ma5 < ma20 and is_bull:
-                    signals.append({
-                        "date": d,
-                        "direction": "sell",
-                        "price": price,
-                        "score": 55.0,
-                        "reason": f"MA{self.short}下穿MA{self.long}死叉",
-                    })
-
-            # 更新状态
+            # 更新 was_bull 状态
             if is_bull:
                 was_bull = True
             elif is_bear:
@@ -566,6 +598,7 @@ class MAStrategy(BaseStrategy):
         df = _calc_indicators(df)
         cash = initial_cash
         position = 0
+        cost_price = 0.0
         trades = []
         equity_curve = []
         was_bull = None
@@ -584,27 +617,37 @@ class MAStrategy(BaseStrategy):
             is_bull = ma5 > ma10 > ma20
             is_bear = ma5 < ma10 < ma20
 
-            # 买入
-            if not was_bull and is_bull and cash >= price * 100:
+            # 止损
+            stop_loss = position > 0 and cost_price > 0 and price < cost_price * 0.92
+
+            # 买入：多头排列 或 MA5 上穿 MA20
+            buy_sig = (not was_bull or was_bull is None) and not stop_loss and cash >= price * 100 and (
+                is_bull or (prev_ma5 <= prev_ma20 and ma5 > ma20)
+            )
+
+            # 卖出：空头排列 或 MA5 下穿 MA20 或止损
+            sell_sig = position > 0 and (stop_loss or is_bear or
+                                           (prev_ma5 >= prev_ma20 and ma5 < ma20))
+
+            if buy_sig:
                 qty = int(cash // (price * 100)) * 100
                 cash -= qty * price
                 position += qty
-                trades.append({"date": str(d), "action": "buy", "price": price, "qty": qty})
+                cost_price = price
                 was_bull = True
+                reason = "均线金叉" if (prev_ma5 <= prev_ma20 and ma5 > ma20) else "多头排列"
+                trades.append({"date": str(d), "action": "buy", "price": price,
+                               "qty": qty, "reason": reason})
 
-            # 卖出
-            elif was_bull and (is_bear or (prev_ma5 >= prev_ma20 and ma5 < ma20)) and position > 0:
+            elif sell_sig:
+                reason = ("止损" if stop_loss else
+                          ("均线死叉" if (prev_ma5 >= prev_ma20 and ma5 < ma20) else "空头排列"))
                 cash += position * price
-                trades.append({"date": str(d), "action": "sell", "price": price, "qty": position})
+                trades.append({"date": str(d), "action": "sell", "price": price,
+                               "qty": position, "reason": reason})
                 position = 0
                 was_bull = False
-
-            # MA5 下穿 MA20 辅助止损
-            elif was_bull and prev_ma5 >= prev_ma20 and ma5 < ma20 and position > 0:
-                cash += position * price
-                trades.append({"date": str(d), "action": "sell", "price": price, "qty": position, "reason": "MA死叉止损"})
-                position = 0
-                was_bull = False
+                cost_price = 0.0
 
             if is_bull:
                 was_bull = True
@@ -617,7 +660,8 @@ class MAStrategy(BaseStrategy):
         if position > 0:
             last_price = float(df.iloc[-1]["close"])
             cash += position * last_price
-            trades.append({"date": str(df.iloc[-1]["date"].date()), "action": "sell", "price": last_price, "qty": position, "reason": "回测结束"})
+            trades.append({"date": str(df.iloc[-1]["date"].date()), "action": "sell",
+                           "price": last_price, "qty": position, "reason": "回测结束"})
 
         return self._calc_stats(initial_cash, cash, trades, equity_curve, df)
 

@@ -38,6 +38,7 @@ class AKShareSource(BaseDataSource):
     def get_stock_daily(self, code: str, start: str, end: str) -> List[Dict]:
         """获取历史日线（AKShare 主源，westock-data 降级）"""
         # ── 主源：AKShare ────────────────────────────────────────
+        ak_records = None  # 必须在 try 外初始化，防止 UnboundLocalError
         try:
             market = code[:2]  # sh/sz/bj
             stock_code = code[2:]
@@ -48,20 +49,25 @@ class AKShareSource(BaseDataSource):
                 end_date=end.replace("-", ""),
                 adjust="qfq",  # 前复权
             )
-            ak_records = None
             if not df.empty:
                 ak_records = self._parse_ak_daily(df)
         except Exception as e:
             print(f"[AKShare] 历史日线获取失败({code}): {e}，尝试 westock-data 降级…")
 
         # 校验主源数据的日期范围是否覆盖请求范围
+        # 注意：结束日期允许比请求日期早最多 5 个自然日（周末/节假日无交易数据）
         if ak_records:
+            from datetime import datetime as _dt
             dates = [r["date"] for r in ak_records]
             data_start = min(dates).replace("-", "")
             data_end   = max(dates).replace("-", "")
             s_ymd = start.replace("-", "")
             e_ymd = end.replace("-", "")
-            if data_start > s_ymd or data_end < e_ymd:
+            # 结束日期：data_end 允许比 e_ymd 早最多 5 天（周末/节假日）
+            e_dt = _dt.strptime(e_ymd, "%Y%m%d")
+            data_end_dt = _dt.strptime(data_end, "%Y%m%d")
+            end_gap = (e_dt - data_end_dt).days
+            if data_start > s_ymd or end_gap > 5:
                 print(f"[AKShare] 数据范围不足({code}): 请求 {s_ymd}~{e_ymd}，"
                       f"实际 {data_start}~{data_end}，尝试 westock-data 降级…")
                 ak_records = None
@@ -69,14 +75,14 @@ class AKShareSource(BaseDataSource):
             return ak_records
 
         # ── 降级：westock-data K线 ────────────────────────────────
+        ws_records = None
         try:
             from app.data.westock_data import WestockData
-            # count 使用自然日天数（确保覆盖完整范围，按日期过滤后截断）
             from datetime import datetime
             s = datetime.strptime(start.replace("-", ""), "%Y%m%d")
             e = datetime.strptime(end.replace("-", ""), "%Y%m%d")
             days = (e - s).days
-            count = max(days, 250)  # 自然日天数，确保 westock-data 返回足够覆盖日期范围的数据
+            count = max(int(days * 1.5), 365)
             records = WestockData().kline(code, period="day", count=count)
             # westock-data 返回 YYYY-MM-DD，转换为 YYYYMMDD 后按日期过滤
             def _to_ymd(d: str) -> str:
@@ -84,11 +90,70 @@ class AKShareSource(BaseDataSource):
             s_ymd = start.replace("-", "")
             e_ymd = end.replace("-", "")
             filtered = [r for r in records if s_ymd <= _to_ymd(r.get("date", "")) <= e_ymd]
-            # 按日期升序排序（从旧到新）
             filtered.sort(key=lambda r: _to_ymd(r.get("date", "")))
-            return filtered if filtered else records
+            ws_records = filtered if filtered else records
         except Exception as e:
-            print(f"[westock-data] 降级也失败({code}): {e}")
+            print(f"[westock-data] 降级失败({code}): {e}")
+
+        # 校验 westock-data 数据日期范围是否覆盖请求范围
+        if ws_records:
+            from datetime import datetime as _dt
+            dates = [r["date"].replace("-", "").replace("/", "") for r in ws_records]
+            ws_start = min(dates)
+            ws_end   = max(dates)
+            s_ymd = start.replace("-", "")
+            e_ymd = end.replace("-", "")
+            e_dt = _dt.strptime(e_ymd, "%Y%m%d")
+            ws_end_dt = _dt.strptime(ws_end, "%Y%m%d")
+            end_gap = (e_dt - ws_end_dt).days
+            if ws_start <= s_ymd and end_gap <= 5:
+                return ws_records
+            print(f"[westock-data] 数据范围不足({code}): 请求 {s_ymd}~{e_ymd}，"
+                  f"实际 {ws_start}~{ws_end}，尝试 Baostock 降级…")
+        else:
+            print(f"[westock-data] 无数据({code})，尝试 Baostock 降级…")
+
+        # ── 最终降级：Baostock ─────────────────────────────────────
+        try:
+            import baostock as bs
+            import pandas as pd
+            bs.login()
+            # Baostock 代码格式：sh.603009
+            bs_code = f"{code[:2]}.{code[2:]}"
+            rs = bs.query_history_k_data_plus(
+                bs_code,
+                "date,code,open,high,low,close,volume,amount",
+                start_date=start,
+                end_date=end,
+                frequency="d",
+                adjustflag="2",  # 2=前复权
+            )
+            rows = []
+            while rs.next():
+                rows.append(rs.get_row_data())
+            bs.logout()
+            if not rows:
+                print(f"[Baostock] 无数据({code})")
+                return []
+            # 转换为统一格式
+            records = []
+            for row in rows:
+                records.append({
+                    "date":       row[0],  # date
+                    "open":       float(row[2]),
+                    "close":      float(row[5]),
+                    "high":       float(row[3]),
+                    "low":        float(row[4]),
+                    "volume":     int(row[6]),
+                    "amount":     float(row[7]),
+                    "pct_chg":   0.0,  # Baostock 不含涨跌幅，由调用方计算
+                    "turnover":  0.0,
+                })
+            print(f"[Baostock] 获取成功({code}): {len(records)} 条，"
+                  f"{records[0]['date']} ~ {records[-1]['date']}")
+            return records
+        except Exception as e:
+            print(f"[Baostock] 降级也失败({code}): {e}")
             return []
 
     @staticmethod
