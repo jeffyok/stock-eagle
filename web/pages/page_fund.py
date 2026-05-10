@@ -64,11 +64,22 @@ if run_filter:
                 else:
                     results = screener.top_mixed_funds(top_n=top_n, min_1y_return=min_1y)
 
+            # 存入 session_state，避免切换基金时丢失
+            st.session_state["fund_results"] = results
+            st.session_state["fund_screener"] = screener
+            st.session_state["fund_type"] = fund_type
+
         except Exception as e:
             st.exception(e)
             st.stop()
 
-    st.subheader(f"筛选结果（{fund_type}基金）")
+# ── 显示筛选结果 + 净值历史 ─────────────────────────────────────
+results = st.session_state.get("fund_results", None)
+screener = st.session_state.get("fund_screener", None)
+disp_fund_type = st.session_state.get("fund_type", fund_type)
+
+if results is not None:
+    st.subheader(f"筛选结果（{disp_fund_type}基金）")
     if not results:
         st.warning("未找到符合条件的基金，请降低筛选条件后重试。")
     else:
@@ -99,9 +110,9 @@ if run_filter:
         selected_code = st.selectbox(
             "选择基金",
             [r["code"] for r in results],
-            format_func=lambda x: f"{x} - {[r['name'] for r in results if r['code']==x][0]}"
+            format_func=lambda x: f"{x} - {next((r['name'] for r in results if r['code']==x), '未知')}"
         )
-        if selected_code and st.button("查看净值走势", key="btn_nav"):
+        if selected_code and screener:
             with st.spinner("获取净值历史…"):
                 nav_history = screener.get_fund_nav_history(selected_code, years=1)
             if nav_history:
@@ -117,14 +128,20 @@ if run_filter:
                         line=dict(color="#1f77b4", width=2),
                     ))
                     fig.update_layout(
-                        title=f"{[r['name'] for r in results if r['code']==selected_code][0]} 净值走势",
+                        title=f"{next((r['name'] for r in results if r['code']==selected_code), '未知')} 净值走势",
                         height=400, xaxis_title="日期", yaxis_title="净值（元）",
                     )
                     st.plotly_chart(fig, width='stretch')
                 except ImportError:
                     st.line_chart(df_nav.set_index("日期")["净值"])
                 with st.expander("净值历史数据（最近20条）"):
-                    st.dataframe(df_nav.tail(20), width='stretch', hide_index=True)
+                    display_df = df_nav[["日期", "净值", "nav_acc", "pct_chg"]].rename(columns={
+                        "日期": "日期",
+                        "净值": "单位净值(元)",
+                        "nav_acc": "累计净值(元)",
+                        "pct_chg": "日涨跌幅(%)",
+                    })
+                    st.dataframe(display_df.tail(20), width='stretch', hide_index=True)
             else:
                 st.warning("未获取到净值历史数据")
 else:

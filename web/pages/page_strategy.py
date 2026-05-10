@@ -93,9 +93,13 @@ if run_signal:
                 return "color:#00b050; font-weight:700;"
             return ""
 
+        # 中文字段名映射
+        col_rename = {"date": "日期", "direction": "方向", "price": "价格", "score": "评分"}
+        df_show = df_show.rename(columns={k: v for k, v in col_rename.items() if k in df_show.columns})
+
         style = df_show.style
-        if "direction" in df_show.columns:
-            style = style.map(color_direction, subset=pd.IndexSlice[:, ["direction"]])
+        if "方向" in df_show.columns:
+            style = style.map(color_direction, subset=pd.IndexSlice[:, ["方向"]])
         st.dataframe(style, width='stretch', hide_index=True)
 
         c1, c2, c3 = st.columns(3)

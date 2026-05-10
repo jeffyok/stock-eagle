@@ -173,7 +173,8 @@ if run:
 
         # 中文列名映射
         col_rename = {"date": "日期", "action": "操作", "price": "价格",
-                      "qty": "数量", "reason": "原因", "return_pct": "收益率(%)"}
+                      "qty": "数量", "reason": "原因", "return_pct": "收益率(%)",
+                      "score": "评分"}
         trades_show = trades_show.rename(columns={k: v for k, v in col_rename.items() if k in trades_show.columns})
 
         styled = trades_show.style.map(color_action, subset=["操作"])

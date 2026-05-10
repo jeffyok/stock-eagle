@@ -251,10 +251,10 @@ class AKShareSource(BaseDataSource):
         raise last_err
 
     def get_sector_spot(self) -> List[Dict]:
-        """获取板块实时行情"""
-        # ── 主源：AKShare（带重试）──────────────────────────────────
+        """获取板块实时行情（spot_em 字段更丰富）"""
+        # ── 主源：AKShare spot_em（带重试）───────────────────────
         try:
-            df = self._ak_retry(ak.stock_board_industry_name_em)
+            df = self._ak_retry(ak.stock_board_industry_spot_em)
             if df is None or df.empty:
                 raise ValueError("返回空数据")
             df = df.rename(columns={
@@ -262,11 +262,13 @@ class AKShareSource(BaseDataSource):
                 "板块名称": "sector_name",
                 "涨跌幅": "pct_chg",
                 "总市值": "total_market",
+                "换手率": "turnover",
             })
             records = df.to_dict("records")
             for r in records:
                 r["pct_chg"] = self._safe_float(r.get("pct_chg", 0))
                 r["total_market"] = self._safe_float(r.get("total_market", 0))
+                r["turnover"] = self._safe_float(r.get("turnover", 0))
             records.sort(key=lambda x: x.get("pct_chg", 0), reverse=True)
             return records
         except Exception as e:
@@ -648,37 +650,76 @@ class AKShareSource(BaseDataSource):
     def get_fund_nav_history(self, code: str, years: int = 1) -> List[Dict]:
         """
         获取单只基金历史净值（最近 N 年）
-        AKShare 接口：fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
+        主源：AKShare fund_open_fund_info_em（单位净值走势 + 累计净值走势）
+        降级：efinance
         """
+        # ── 主源：AKShare ────────────────────────────────────────
         try:
-            df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
-            if df.empty:
-                return []
-            df["净值日期"] = pd.to_datetime(df["净值日期"])
+            # 获取单位净值
+            df_nav = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
+            if df_nav is None or df_nav.empty:
+                raise ValueError("返回空数据")
+            df_nav["净值日期"] = pd.to_datetime(df_nav["净值日期"])
+
+            # 尝试获取累计净值（单独接口调用）
+            try:
+                df_acc = ak.fund_open_fund_info_em(symbol=code, indicator="累计净值走势")
+                if df_acc is not None and not df_acc.empty:
+                    df_acc["净值日期"] = pd.to_datetime(df_acc["净值日期"])
+                    acc_map = dict(zip(df_acc["净值日期"], df_acc["累计净值"]))
+                else:
+                    acc_map = {}
+            except Exception:
+                acc_map = {}
+
             cutoff = pd.Timestamp.now() - pd.Timedelta(days=365 * years)
-            df = df[df["净值日期"] >= cutoff]
+            df_nav = df_nav[df_nav["净值日期"] >= cutoff]
+
             records = []
-            for _, row in df.iterrows():
+            for _, row in df_nav.iterrows():
+                nav_date = row["净值日期"]
                 records.append({
-                    "date":    str(row["净值日期"].date()),
+                    "date":    str(nav_date.date()),
                     "nav":     float(row.get("单位净值", 0) or 0),
-                    "nav_acc": float(row.get("累计净值", 0) or 0),
+                    "nav_acc": float(acc_map.get(nav_date, 0) or 0),
                     "pct_chg": float(row.get("日增长率", 0) or 0),
                 })
             return records
         except Exception as e:
-            print(f"AKShare 基金净值历史获取失败({code}): {e}")
+            print(f"AKShare 基金净值历史获取失败({code}): {e}，降级到 efinance...")
+
+        # ── 降级：efinance ──────────────────────────────────
+        try:
+            import efinance as ef
+            df = ef.fund.get_quote_history(code)
+            if df is None or df.empty:
+                return []
+            # efinance 返回列：日期、单位净值、累计净值、涨跌幅
+            df["日期"] = pd.to_datetime(df["日期"])
+            cutoff = pd.Timestamp.now() - pd.Timedelta(days=365 * years)
+            df = df[df["日期"] >= cutoff]
+            records = []
+            for _, row in df.iterrows():
+                records.append({
+                    "date":    str(row["日期"].date()),
+                    "nav":     float(row.get("单位净值", 0) or 0),
+                    "nav_acc": float(row.get("累计净值", 0) or 0),
+                    "pct_chg": float(row.get("涨跌幅", 0) or 0),
+                })
+            return records
+        except Exception as e2:
+            print(f"efinance 基金净值历史获取失败({code}): {e2}")
             return []
 
     # ─── 板块/概念 ───────────────────────────────────────────────────────
 
     def get_concept_sectors(self) -> List[Dict]:
-        """获取概念板块实时行情（优化：to_dict 替代 iterrows）"""
+        """获取概念板块实时行情（spot_em 字段更丰富）"""
         import akshare as ak
 
-        # ── 主源：AKShare ────────────────────────────────────────
+        # ── 主源：AKShare spot_em ──────────────────────────────
         try:
-            df = self._ak_retry(ak.stock_board_concept_name_em)
+            df = self._ak_retry(ak.stock_board_concept_spot_em)
             if df.empty:
                 raise ValueError("返回空数据")
             df = df.rename(columns={
@@ -686,11 +727,13 @@ class AKShareSource(BaseDataSource):
                 "板块名称": "sector_name",
                 "涨跌幅": "pct_chg",
                 "总市值": "total_market",
+                "换手率": "turnover",
             })
             records = df.to_dict("records")
             for r in records:
                 r["pct_chg"] = float(r.get("pct_chg", 0))
                 r["total_market"] = float(r.get("total_market", 0) or 0)
+                r["turnover"] = float(r.get("turnover", 0) or 0)
             records.sort(key=lambda x: x["pct_chg"], reverse=True)
             return records
         except Exception as e:
