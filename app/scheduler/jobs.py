@@ -3,7 +3,6 @@
 """
 import datetime
 from loguru import logger
-from sqlalchemy.orm import Session
 from app.database import SessionLocal
 
 
@@ -296,21 +295,205 @@ def scan_strategy_signals():
         db.close()
 
 
-def daily_review_task():
+def daily_review_task(push: bool = True):
     """
     每日复盘任务
     每个交易日 16:00 执行
+    :param push: 是否推送到飞书，定时任务默认 True，页面手动生成可传 False
     """
     from app.notify import push_daily_review
     from app.config import settings
+    from app.data.akshare_source import AKShareSource
+    from app.portfolio.service import get_positions, enrich_with_realtime
+    from app.risk import check_portfolio
+    from app.models.review import DailyReview
+    from app.database import SessionLocal
+    import akshare as ak
+    import datetime
 
-    logger.info("开始生成每日复盘...")
-    # TODO: 汇总当日行情、板块、信号，生成复盘报告
-    review_text = "StockEagle 每日复盘 - 待实现"
+    logger.info(f"开始生成每日复盘（push={push}）...")
 
-    if settings.FEISHU_WEBHOOK_URL:
-        push_daily_review(review_text)
-    logger.success("每日复盘推送完成")
+    today = datetime.date.today()
+    today_str = today.strftime("%Y%m%d")
+    lines = []
+    src = AKShareSource()
+    positions = []
+
+    # ── 标题 ────────────────────────────────────────────────────────
+    lines.append(f"📰 StockEagle 每日复盘报告")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"📅 日期：{today.strftime('%Y-%m-%d')}")
+    lines.append("")
+
+    # ── 1. 市场概况 ───────────────────────────────────────────────
+    lines.append("📊 市场概况")
+    try:
+        # 上证指数(000001)、深证成指(399001)、创业板指(399006)
+        df = ak.stock_zh_index_spot_em()
+        index_map = {"000001": "上证指数", "399001": "深证成指", "399006": "创业板指"}
+        for _, row in df.iterrows():
+            code = str(row.get("代码", ""))
+            if code in index_map:
+                name = index_map[code]
+                price = float(row.get("最新价", 0))
+                pct = float(row.get("涨跌幅", 0))
+                sign = "+" if pct >= 0 else ""
+                lines.append(f"  {name}：{price:.2f}  {sign}{pct:.2f}%")
+        lines.append("")
+    except Exception as e:
+        logger.warning(f"市场概况获取失败: {e}")
+        lines.append("  数据获取失败")
+        lines.append("")
+
+    # ── 2. 持仓概览 ───────────────────────────────────────────────
+    lines.append("💼 持仓概览")
+    try:
+        positions = get_positions()
+        if positions:
+            positions = enrich_with_realtime(positions)
+            total_cost = sum(p.cost * p.quantity for p in positions)
+            total_mv = sum(p.market_value() or 0 for p in positions)
+            total_pl = total_mv - total_cost
+            total_pl_pct = (total_pl / total_cost * 100) if total_cost > 0 else 0
+            sign = "+" if total_pl >= 0 else ""
+            lines.append(f"  账户总市值：¥{total_mv:,.2f}")
+            lines.append(f"  浮动盈亏：{sign}¥{total_pl:,.2f}（{sign}{total_pl_pct:.2f}%）")
+            lines.append(f"  持仓数量：{len(positions)} 只")
+        else:
+            lines.append("  暂无持仓")
+        lines.append("")
+    except Exception as e:
+        logger.warning(f"持仓概览获取失败: {e}")
+        lines.append("  数据获取失败")
+        lines.append("")
+
+    # ── 3. 风控预警（今日）───────────────────────────────────────
+    lines.append("🚨 风控预警（今日）")
+    try:
+        if positions:
+            alerts = check_portfolio(positions)
+            if not alerts:
+                lines.append("  ✅ 暂无预警，一切正常！")
+            else:
+                for a in alerts:
+                    if a.level == "red":
+                        lines.append(f"  🔴 {a.name}（{a.code}）— {a.rule}：{a.current_val}")
+                    elif a.level == "yellow":
+                        lines.append(f"  🟡 {a.name}（{a.code}）— {a.rule}：{a.current_val}")
+                    else:
+                        lines.append(f"  🟢 {a.name}（{a.code}）— {a.rule}：{a.current_val}")
+        else:
+            lines.append("  无持仓，无预警")
+        lines.append("")
+    except Exception as e:
+        logger.warning(f"风控预警获取失败: {e}")
+        lines.append("  数据获取失败")
+        lines.append("")
+
+    # ── 4. 龙虎榜异动（今日）────────────────────────────────────
+    lines.append("🐉 龙虎榜异动（今日）")
+    try:
+        lhb_data = src.get_dragon_tiger(today_str)
+        if lhb_data:
+            rise = sum(1 for r in lhb_data if "涨" in r.get("reason", ""))
+            fall = sum(1 for r in lhb_data if "跌" in r.get("reason", ""))
+            lines.append(f"  共 {len(lhb_data)} 只股票上榜，涨停约{rise} 只、跌停约{fall} 只")
+            # 展示前3条
+            for r in lhb_data[:3]:
+                lines.append(f"  • {r['name']}（{r['code']}）{r['reason']} 净买额：{r.get('net_amount', 0):.0f}万")
+        else:
+            lines.append("  今日无龙虎榜数据")
+        lines.append("")
+    except Exception as e:
+        logger.warning(f"龙虎榜数据获取失败: {e}")
+        lines.append("  数据获取失败")
+        lines.append("")
+
+    # ── 5. 板块异动 Top 5 ────────────────────────────────────────
+    lines.append("🔥 板块异动 Top 5")
+    try:
+        sector_data = src.get_sector_spot()
+        if sector_data:
+            for i, s in enumerate(sector_data[:5], 1):
+                pct = float(s.get("pct_chg", 0))
+                sign = "+" if pct >= 0 else ""
+                lines.append(f"  {i}. {s['sector_name']}  {sign}{pct:.2f}%")
+        else:
+            lines.append("  无板块数据")
+        lines.append("")
+    except Exception as e:
+        logger.warning(f"板块异动数据获取失败: {e}")
+        lines.append("  数据获取失败")
+        lines.append("")
+
+    # ── 6. 今日策略信号 ──────────────────────────────────────────
+    lines.append("📡 今日策略信号")
+    try:
+        db = SessionLocal()
+        try:
+            from app.models.signal import StrategySignal
+            import datetime as dt
+            today_start = datetime.datetime.combine(today, datetime.time(0, 0))
+            signals = db.query(StrategySignal).filter(
+                StrategySignal.signal_date >= today_start,
+                StrategySignal.is_expired == 0,
+            ).all()
+            if signals:
+                strategy_names = {"multi_factor": "多因子", "macd": "MACD", "bollinger": "布林带", "ma": "均线"}
+                for sig in signals[:10]:
+                    name = strategy_names.get(sig.signal_type, sig.signal_type)
+                    direction = "BUY" if sig.direction == "buy" else "SELL"
+                    lines.append(f"  {sig.code}  {direction}  {name}  价格：{sig.price:.2f}")
+            else:
+                lines.append("  今日暂无新策略信号")
+            db.close()
+        except Exception:
+            db.close()
+    except Exception as e:
+        logger.warning(f"策略信号获取失败: {e}")
+        lines.append("  数据获取失败")
+    lines.append("")
+
+    # ── 结尾 ───────────────────────────────────────────────────────
+    import datetime as dt
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"由 StockEagle 🦅 自动生成 | {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    review_text = "\n".join(lines)
+    logger.info(f"复盘报告生成完成，长度：{len(review_text)} 字符")
+
+    # ── 保存到 t_daily_review ──────────────────────────────────────
+    db = SessionLocal()
+    try:
+        existing = db.query(DailyReview).filter(DailyReview.review_date == today).first()
+        if existing:
+            existing.market_trend = review_text
+            existing.summary = f"自动生成 {today}"
+            existing.created_at = datetime.datetime.now()
+        else:
+            review = DailyReview(
+                review_date=today,
+                market_trend=review_text,
+                summary=f"自动生成 {today}",
+            )
+            db.add(review)
+        db.commit()
+        logger.success("✅ 复盘报告已保存到数据库")
+    except Exception as e:
+        logger.exception(f"保存复盘报告失败: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+    # ── 推送到飞书 ────────────────────────────────────────────────
+    if push and settings.FEISHU_WEBHOOK_URL:
+        ok = push_daily_review(review_text)
+        if ok:
+            logger.success("✅ 每日复盘推送完成")
+        else:
+            logger.warning("每日复盘推送失败")
+    else:
+        logger.info("未配置 FEISHU_WEBHOOK_URL，跳过推送")
 
 
 def push_portfolio_alerts_task():
